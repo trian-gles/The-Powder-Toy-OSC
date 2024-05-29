@@ -13,8 +13,11 @@
 #include "elements/STKM.h"
 #include "elements/PIPE.h"
 #include "elements/FILT.h"
+#include "osc/osc.h"
 #include <iostream>
 #include <set>
+
+static TPTOscClient* oscClient;
 
 static float remainder_p(float x, float y)
 {
@@ -2203,10 +2206,15 @@ void Simulation::UpdateParticles(int start, int end)
 	//the main particle loop function, goes over all particles.
 	auto &sd = SimulationData::CRef();
 	auto &elements = sd.elements;
+	
+	
 	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++)
 	{
 		if (parts[i].type)
 		{
+			
+
+
 			debug_mostRecentlyUpdated = i;
 			auto t = parts[i].type;
 
@@ -2850,6 +2858,8 @@ void Simulation::UpdateParticles(int start, int end)
 				x = (int)(parts[i].x+0.5f);
 				y = (int)(parts[i].y+0.5f);
 			}
+			
+			
 
 			if(legacy_enable)//if heat sim is off
 				Element::legacyUpdate(this, i,x,y,surround_space,nt, parts, pmap);
@@ -3328,9 +3338,30 @@ killed:
 						}
 					}
 				}
+				
 			}
 movedone:
 			continue;
+		}
+		
+	}
+
+	
+
+	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+		if (parts[i].type) {
+			if (parts[i].vx != 0 && parts[i].vy != 0){
+				oscClient->CountParticle(&(parts[i]));
+			}
+		}
+	}
+	oscClient->SortParticles();
+
+	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+		if (parts[i].type) {
+			if (parts[i].vx != 0 && parts[i].vy != 0){
+				oscClient->ProcessParticle(&(parts[i]));
+			}
 		}
 	}
 
@@ -3339,6 +3370,7 @@ movedone:
 	{
 		framerender--;
 	}
+	oscClient->AnalyzeAndSend();
 }
 
 void Simulation::RecalcFreeParticles(bool do_life_dec)
@@ -3883,7 +3915,9 @@ void Simulation::AfterSim()
 	frameCount += 1;
 }
 
-Simulation::~Simulation() = default;
+Simulation::~Simulation() {
+	delete oscClient;
+}
 
 Simulation::Simulation():
 	replaceModeSelected(0),
@@ -3912,6 +3946,9 @@ Simulation::Simulation():
 	sandcolour_frame(0),
 	deco_space(DECOSPACE_SRGB)
 {
+	if (oscClient == NULL)
+		oscClient = new TPTOscClient();
+
 	int tportal_rx[] = {-1, 0, 1, 1, 1, 0,-1,-1};
 	int tportal_ry[] = {-1,-1,-1, 0, 1, 1, 1, 0};
 

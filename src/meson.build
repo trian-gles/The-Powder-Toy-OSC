@@ -160,6 +160,8 @@ subdir('prefs')
 subdir('resampler')
 subdir('simulation')
 subdir('tasks')
+subdir('osc')
+
 
 powder_files += common_files
 render_files += common_files

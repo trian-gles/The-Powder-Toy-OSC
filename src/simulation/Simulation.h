@@ -11,12 +11,17 @@
 #include "common/tpt-rand.h"
 #include "Element.h"
 #include "SimulationConfig.h"
+//#include "osc/osc.h"
+//include <winsock2.h>
+
 #include <cstring>
 #include <cstddef>
 #include <vector>
 #include <array>
 #include <memory>
 #include <optional>
+
+
 
 constexpr int CHANNELS = int(MAX_TEMP - 73) / 100 + 2;
 
@@ -35,6 +40,7 @@ class GameSave;
 class Simulation
 {
 public:
+
 	GravityPtr grav;
 	std::unique_ptr<Air> air;
 	RNG rng;
