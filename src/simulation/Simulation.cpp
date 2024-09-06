@@ -1703,7 +1703,7 @@ Simulation::GetNormalResult Simulation::get_normal_interp(Sim &sim, int pt, floa
 template
 Simulation::GetNormalResult Simulation::get_normal_interp<false, const Simulation>(const Simulation &sim, int pt, float x0, float y0, float dx, float dy);
 
-void Simulation::kill_part(int i)//kills particle number i
+void Simulation::kill_part(int i)//kills particle number i ASDFGHJ
 {
 	if (i < 0 || i >= NPART)
 		return;
@@ -1714,6 +1714,10 @@ void Simulation::kill_part(int i)//kills particle number i
 	auto &sd = SimulationData::CRef();
 	auto &elements = sd.elements;
 	int t = parts[i].type;
+	if (t == PT_VI){
+		
+	}
+	
 	if (t && elements[t].ChangeType)
 	{
 		(*(elements[t].ChangeType))(this, i, x, y, t, PT_NONE);
@@ -1785,7 +1789,7 @@ bool Simulation::part_change_type(int i, int x, int y, int t)
 
 //the function for creating a particle, use p=-1 for creating a new particle, -2 is from a brush, or a particle number to replace a particle.
 //tv = Type (PMAPBITS bits) + Var (32-PMAPBITS bits), var is usually 0
-int Simulation::create_part(int p, int x, int y, int t, int v)
+int Simulation::create_part(int p, int x, int y, int t, int v)  //ASDFGHJ
 {
 	int i, oldType = PT_NONE;
 
@@ -1924,6 +1928,10 @@ int Simulation::create_part(int p, int x, int y, int t, int v)
 		(*(elements[t].ChangeType))(this, i, x, y, oldType, t);
 
 	elementCount[t]++;
+	
+	if (t == PT_VINE || t == PT_PLNT){
+		std::cout << "Plant create" << std::endl;
+	}
 	return i;
 }
 
