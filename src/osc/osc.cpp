@@ -60,6 +60,26 @@ size_t makePowderAnalytics(void* buffer, size_t size, MasterReturnParams* params
     return packet.size();
 }
 
+size_t makePlantPacket(void* buffer, size_t size, std::vector<int> bins, const char* addr){
+    // Construct a packet
+    OSCPP::Client::Packet packet(buffer, size);
+    packet
+        // Open a bundle with a timetag
+        .openBundle(1234ULL)
+        // for efficiency this needs to be known in advance.
+        .openMessage(addr, 16);
+    
+    for (int i = 0; i < bins.size(); i++){
+        packet.int32(bins[i]);
+    }
+        
+        
+    packet    
+        .closeMessage()
+        .closeBundle();
+    return packet.size();
+}
+
 
 void oscTest(){
     
@@ -124,6 +144,14 @@ void TPTOscClient::SortParticles(){
     partSorter.reset();
 }
 
+void TPTOscClient::NewPlant(int y){
+    plantHandler.update(y);
+}
+
+void TPTOscClient::KillPlant(int y){
+    plantHandler.kill(y);
+}
+
 
 
 void TPTOscClient::ProcessParticle(Particle* p){
@@ -146,4 +174,12 @@ void TPTOscClient::AnalyzeAndSend(){
         const size_t packetSize = makePowderAnalytics(sendBuffer.data(), sendBuffer.size(), &params, i);
         int n_bytes = ::sendto(sock, sendBuffer.data(), packetSize, 0, reinterpret_cast<sockaddr*>(&destination), sizeof(destination));
     }
+
+     auto [newBins, deletedBins] = plantHandler.get();
+    const size_t packetSize = makePlantPacket(sendBuffer.data(), sendBuffer.size(), newBins, "/tptplantnew/");
+    int n_bytes = ::sendto(sock, sendBuffer.data(), packetSize, 0, reinterpret_cast<sockaddr*>(&destination), sizeof(destination));
+
+    const size_t packetSize2 = makePlantPacket(sendBuffer.data(), sendBuffer.size(), deletedBins, "/tptplantdel/");
+    n_bytes = ::sendto(sock, sendBuffer.data(), packetSize, 0, reinterpret_cast<sockaddr*>(&destination), sizeof(destination));
+     plantHandler.reset();
 }

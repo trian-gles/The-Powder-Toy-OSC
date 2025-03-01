@@ -3,6 +3,65 @@
 #include "simulation/Element.h"
 #include "simulation/ElementClasses.h"
 #include <iostream>
+#include <vector>
+#include <unordered_map>
+#include <cmath>
+#include <tuple>
+#include <utility>
+
+// Constructor for BinHandler
+BinHandler::BinHandler(int count) : binCount(count) {
+    bins.resize(binCount, 0);
+}
+
+// Reset all bins to zero
+void BinHandler::reset() {
+    for (int i = 0; i < binCount; ++i) {
+        bins[i] = 0;
+    }
+}
+
+// Update a specific bin by incrementing its count
+void BinHandler::update(int index) {
+    if (index >= 1 && index <= binCount) {
+        bins[index - 1]++;
+    }
+}
+
+// Get the current bin counts
+std::vector<int> BinHandler::get() {
+    return bins;
+}
+
+// Constructor for PlantHandler
+PlantHandler::PlantHandler() 
+    : newBins(16), deletedBins(16) {}
+
+// Reset all plant states
+void PlantHandler::reset() {
+    newBins.reset();
+    deletedBins.reset();
+}
+
+// Update plant state at the given index
+void PlantHandler::update(int y) {
+    int bin = static_cast<int>(std::floor(16 * (383 - y) / 383.0)) + 1;
+    newBins.update(bin);
+}
+
+void PlantHandler::kill(int y){
+    int bin = static_cast<int>(std::floor(16 * (383 - y) / 383.0)) + 1;
+    deletedBins.update(bin);
+}
+
+
+// Get the bin data for new, old, and deleted plants
+std::tuple<std::vector<int>, std::vector<int>> PlantHandler::get() {
+
+    return {newBins.get(), deletedBins.get()};
+}
+
+
 
 DistributionHandler::DistributionHandler() : min(MIN), max(MAX) {}
 
