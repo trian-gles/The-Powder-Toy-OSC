@@ -1714,9 +1714,6 @@ void Simulation::kill_part(int i)//kills particle number i ASDFGHJ
 	auto &sd = SimulationData::CRef();
 	auto &elements = sd.elements;
 	int t = parts[i].type;
-	if (t == PT_VI){
-		
-	}
 	
 	if (t && elements[t].ChangeType)
 	{

@@ -4,14 +4,24 @@
 #include <cstring>
 #include <iostream>
 #include <string>
-#include <winsock2.h>
-#pragma comment(lib, "WS2_32.lib")
 #include <array>
-#include "Ws2tcpip.h"
-#include <tchar.h>
 #include <unordered_map>
 #include <algorithm>
 #include <limits>
+
+#ifdef WINDOWS
+    #include <winsock2.h>
+    #pragma comment(lib, "WS2_32.lib")
+    #include "Ws2tcpip.h"
+    #include <tchar.h>
+#else
+    #include <sys/socket.h>
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #include <unistd.h>
+#endif
+
 
 
 size_t makePacket(void* buffer, size_t size)
@@ -83,13 +93,14 @@ void reorder_second_array(std::vector<int>* first_array, std::vector<int>* secon
 }
 
  TPTOscClient::TPTOscClient() : partSorter() {
-	WSADATA wsaData;
     // MAKEWORD(1,1) for Winsock 1.1, MAKEWORD(2,0) for Winsock 2.0
+    #ifdef WINDOWS
+	  WSADATA wsaData;
     if (WSAStartup(MAKEWORD(1, 1), &wsaData) != 0) {
         fprintf(stderr, "WSAStartup failed.\n");
         //exit(1);
     }
-
+    #endif
 
 
     // Set up connection
@@ -104,8 +115,13 @@ void reorder_second_array(std::vector<int>* first_array, std::vector<int>* secon
 }
 
 TPTOscClient::~TPTOscClient(){
-    ::closesocket(sock);
+    #ifdef WINDOWS
     WSACleanup();
+    ::closesocket(sock);
+    #else
+    close(sock);
+    #endif
+
 }
 
 void TPTOscClient::CountParticle(Particle* p){

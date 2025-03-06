@@ -1,9 +1,20 @@
 #pragma once
-#include <winsock2.h>
-#pragma comment(lib, "WS2_32.lib")
-#undef GetUserNameW
 #include <array>
 #include "handler.h"
+
+#ifdef WINDOWS
+    #include <winsock2.h>
+    #pragma comment(lib, "WS2_32.lib")
+		#undef GetUserNameW
+    #include "Ws2tcpip.h"
+#else
+    #include <sys/socket.h>
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+#endif
+
+
 #include "simulation/Particle.h"
 
 #define kMaxPacketSize 8192
@@ -23,7 +34,7 @@ public:
 	void SortParticles();
 	
 private:
-	SOCKET sock;
+	int sock;
 	sockaddr_in destination;
 	std::array<char, kMaxPacketSize> sendBuffer;
 	std::array<MasterHandler, HANDLERS> handlers; 
