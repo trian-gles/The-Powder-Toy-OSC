@@ -1715,6 +1715,7 @@ void Simulation::kill_part(int i)//kills particle number i ASDFGHJ
 	auto &elements = sd.elements;
 	int t = parts[i].type;
 	
+	
 	if (t && elements[t].ChangeType)
 	{
 		(*(elements[t].ChangeType))(this, i, x, y, t, PT_NONE);
@@ -1757,6 +1758,10 @@ bool Simulation::part_change_type(int i, int x, int y, int t)
 	{
 		if (!(*(elements[t].CreateAllowed))(this, i, x, y, t))
 			return false;
+	}
+
+	if (parts[i].type == PT_VINE || parts[i].type == PT_PLNT){
+		oscClient->KillPlant(y);
 	}
 
 	if (elements[parts[i].type].ChangeType)
@@ -1927,7 +1932,7 @@ int Simulation::create_part(int p, int x, int y, int t, int v)  //ASDFGHJ
 	elementCount[t]++;
 	
 	if (t == PT_VINE || t == PT_PLNT){
-		std::cout << "Plant create" << std::endl;
+		oscClient->NewPlant(y);
 	}
 	return i;
 }

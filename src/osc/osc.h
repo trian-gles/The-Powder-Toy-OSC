@@ -32,10 +32,13 @@ public:
 	void ProcessParticle(Particle* p);
 	void CountParticle(Particle* p);
 	void SortParticles();
+	void KillPlant(int y);
+	void NewPlant(int y);
 	
 private:
 	int sock;
 	sockaddr_in destination;
+	PlantHandler plantHandler;
 	std::array<char, kMaxPacketSize> sendBuffer;
 	std::array<MasterHandler, HANDLERS> handlers; 
 	ParticleIdCountSorter partSorter;

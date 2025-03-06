@@ -7,6 +7,32 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <tuple>
+
+class BinHandler {
+public:
+    BinHandler(int count); // Constructor
+    void reset();          // Reset bin counts
+    void update(int index); // Update a specific bin
+    std::vector<int> get(); // Get bin counts
+
+private:
+    int binCount;
+    std::vector<int> bins;
+};
+
+class PlantHandler {
+public:
+    PlantHandler();       // Constructor
+    void reset();         // Reset plant states
+    void update(int y); // Update plant at index
+    void kill(int y); // Kill plant at index
+    std::tuple<std::vector<int>, std::vector<int>> get(); // Get bin data
+
+private:
+    BinHandler newBins;
+    BinHandler deletedBins;
+};
 
 typedef std::pair<double, double> DistParams;
 typedef std::pair<double, double> GaussParams;
