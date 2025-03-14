@@ -49,7 +49,7 @@ void Panel::RemoveChild(Component* c)
 			//remove child from parent. Does not free memory
 			children.erase(children.begin() + i);
 			if (this->GetParentWindow()->IsFocused(c))
-				this->GetParentWindow()->FocusComponent(NULL);
+				this->GetParentWindow()->FocusComponent(nullptr);
 			break;
 		}
 	}
@@ -80,21 +80,21 @@ void Panel::Draw(const Point& screenPos)
 			//check if the component is in the screen, draw if it is
 			if (rect & Size.OriginRect())
 			{
-				child->Draw(screenPos + rect.TopLeft);
+				child->Draw(screenPos + rect.pos);
 			}
 		}
 
 	GetGraphics()->SwapClipRect(clip); // apply old cliprect
 }
 
-void Panel::Tick(float dt)
+void Panel::Tick()
 {
 	// tick ourself first
-	XTick(dt);
+	XTick();
 
 	// tick our children
 	for(unsigned i = 0; i < children.size(); ++i)
-		children[i]->Tick(dt);
+		children[i]->Tick();
 }
 
 void Panel::OnKeyPress(int key, int scan, bool repeat, bool shift, bool ctrl, bool alt)
@@ -305,7 +305,7 @@ void Panel::XDraw(const Point& screenPos)
 {
 }
 
-void Panel::XTick(float dt)
+void Panel::XTick()
 {
 }
 

@@ -8,8 +8,9 @@
 #include "graphics/Renderer.h"
 #include "gui/Style.h"
 #include "simulation/ElementDefs.h"
-#include "simulation/SimulationData.h"
+#include "simulation/SimulationSettings.h"
 #include "client/Client.h"
+#include "gui/credits/Credits.h"
 #include "gui/dialogues/ConfirmPrompt.h"
 #include "gui/dialogues/InformationMessage.h"
 #include "gui/interface/Button.h"
@@ -17,6 +18,7 @@
 #include "gui/interface/DropDown.h"
 #include "gui/interface/Engine.h"
 #include "gui/interface/Label.h"
+#include "gui/interface/Separator.h"
 #include "gui/interface/Textbox.h"
 #include "gui/interface/DirectionSelector.h"
 #include "PowderToySDL.h"
@@ -33,7 +35,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 	};
 	
 	{
-		auto *label = new ui::Label(ui::Point(4, 1), ui::Point(Size.X-8, 22), "Simulation Options");
+		auto *label = new ui::Label(ui::Point(4, 1), ui::Point(Size.X-8, 22), "Settings");
 		label->SetTextColour(style::Colour::InformationTitle);
 		label->Appearance.HorizontalAlign = ui::Appearance::AlignLeft;
 		label->Appearance.VerticalAlign = ui::Appearance::AlignMiddle;
@@ -41,19 +43,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 		AddComponent(label);
 	}
 
-	class Separator : public ui::Component
-	{
-		public:
-		Separator(ui::Point position, ui::Point size) : Component(position, size){}
-		virtual ~Separator(){}
-
-		void Draw(const ui::Point& screenPos) override
-		{
-			GetGraphics()->BlendRect(RectSized(screenPos, Size), 0xFFFFFF_rgb .WithAlpha(180));
-		}		
-	};
-	
-	Separator *tmpSeparator = new Separator(ui::Point(0, 22), ui::Point(Size.X, 1));
+	auto *tmpSeparator = new ui::Separator(ui::Point(0, 22), ui::Point(Size.X, 1));
 	AddComponent(tmpSeparator);
 
 	scrollPanel = new ui::ScrollPanel(ui::Point(1, 23), ui::Point(Size.X-2, Size.Y-39));
@@ -71,6 +61,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 		label->AutoHeight();
 		scrollPanel->AddChild(label);
 		currentY += label->Size.Y - 1;
+		return label;
 	};
 	auto addCheckbox = [this, &currentY, &autoWidth, &addLabel](int indent, String text, String info, std::function<void ()> action) {
 		auto *checkbox = new ui::Checkbox(ui::Point(8 + indent * 15, currentY), ui::Point(1, 16), text, "");
@@ -103,7 +94,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 	};
 	auto addSeparator = [this, &currentY]() {
 		currentY += 6;
-		auto *separator = new Separator(ui::Point(0, currentY), ui::Point(Size.X, 1));
+		auto *separator = new ui::Separator(ui::Point(0, currentY), ui::Point(Size.X, 1));
 		scrollPanel->AddChild(separator);
 		currentY += 11;
 	};
@@ -180,7 +171,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 				tempLabel->Appearance.VerticalAlign = ui::Appearance::AlignMiddle;
 				AddComponent(tempLabel);
 
-				Separator * tempSeparator = new Separator(ui::Point(0, 22), ui::Point(Size.X, 1));
+				auto * tempSeparator = new ui::Separator(ui::Point(0, 22), ui::Point(Size.X, 1));
 				AddComponent(tempSeparator);
 
 				labelValues = new ui::Label(ui::Point(0, (radius * 5 / 2) + 37), ui::Point(Size.X, 16), String::Build(Format::Precision(1), "X:", x, " Y:", y, " Total:", std::hypot(x, y)));
@@ -286,6 +277,9 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 		fastquit = addCheckbox(0, "Fast quit", "Always exit completely when hitting close", [this] {
 			c->SetFastQuit(fastquit->GetChecked());
 		});
+		globalQuit = addCheckbox(0, "Global quit shortcut", "Ctrl+q works everywhere", [this] {
+			c->SetGlobalQuit(globalQuit->GetChecked());
+		});
 	}
 	showAvatars = addCheckbox(0, "Show avatars", "Disable if you have a slow connection", [this] {
 		c->SetShowAvatars(showAvatars->GetChecked());
@@ -318,6 +312,9 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 		}
 		currentY += 4; // and then undo the undo
 	}
+	threadedRendering = addCheckbox(0, "Separate rendering thread", "May increase framerate when fancy effects are in use", [this] {
+		c->SetThreadedRendering(threadedRendering->GetChecked());
+	});
 	decoSpace = addDropDown("Colour space used by decoration tools", {
 		{ "sRGB", DECOSPACE_SRGB },
 		{ "Linear", DECOSPACE_LINEAR },
@@ -328,7 +325,7 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 	});
 
 	currentY += 4;
-	if (ALLOW_DATA_FOLDER)
+	if constexpr (ALLOW_DATA_FOLDER)
 	{
 		auto *dataFolderButton = new ui::Button(ui::Point(10, currentY), ui::Point(90, 16), "Open data folder");
 		dataFolderButton->SetActionCallback({ [] {
@@ -343,18 +340,61 @@ OptionsView::OptionsView() : ui::Window(ui::Point(-1, -1), ui::Point(320, 340))
 			}
 		} });
 		scrollPanel->AddChild(dataFolderButton);
-		auto *migrationButton = new ui::Button(ui::Point(Size.X - 178, currentY), ui::Point(163, 16), "Migrate to shared data directory");
-		migrationButton->SetActionCallback({ [] {
-			ByteString from = Platform::originalCwd;
-			ByteString to = Platform::sharedCwd;
-			new ConfirmPrompt("Do Migration?", "This will migrate all stamps, saves, and scripts from\n\bt" + from.FromUtf8() + "\bw\nto the shared data directory at\n\bt" + to.FromUtf8() + "\bw\n\n" + "Files that already exist will not be overwritten.", { [from, to]() {
-				String ret = Client::Ref().DoMigration(from, to);
-				new InformationMessage("Migration Complete", ret, false);
+		if constexpr (SHARED_DATA_FOLDER)
+		{
+			auto *migrationButton = new ui::Button(ui::Point(Size.X - 178, currentY), ui::Point(163, 16), "Migrate to shared data directory");
+			migrationButton->SetActionCallback({ [] {
+				ByteString from = Platform::originalCwd;
+				ByteString to = Platform::sharedCwd;
+				new ConfirmPrompt("Do Migration?", "This will migrate all stamps, saves, and scripts from\n\bt" + from.FromUtf8() + "\bw\nto the shared data directory at\n\bt" + to.FromUtf8() + "\bw\n\n" + "Files that already exist will not be overwritten.", { [from, to]() {
+					String ret = Client::Ref().DoMigration(from, to);
+					new InformationMessage("Migration Complete", ret, false);
+				} });
 			} });
-		} });
-		scrollPanel->AddChild(migrationButton);
+			scrollPanel->AddChild(migrationButton);
+		}
 		currentY += 26;
 	}
+	String autoStartupRequestNote = "Done once at startup";
+	if (!IGNORE_UPDATES)
+	{
+		autoStartupRequestNote += ", also checks for updates";
+	}
+	autoStartupRequest = addCheckbox(0, "Fetch the message of the day and notifications", autoStartupRequestNote, [this] {
+		auto checked = autoStartupRequest->GetChecked();
+		if (checked)
+		{
+			Client::Ref().BeginStartupRequest();
+		}
+		c->SetAutoStartupRequest(checked);
+	});
+	auto *doStartupRequest = new ui::Button(ui::Point(10, currentY), ui::Point(90, 16), "Fetch them now");
+	doStartupRequest->SetActionCallback({ [] {
+		Client::Ref().BeginStartupRequest();
+	} });
+	scrollPanel->AddChild(doStartupRequest);
+	startupRequestStatus = addLabel(5, "");
+	UpdateStartupRequestStatus();
+	currentY += 13;
+	redirectStd = addCheckbox(0, "Save errors and other messages to a file", "Developers may ask for this when trying to fix problems", [this] {
+		c->SetRedirectStd(redirectStd->GetChecked());
+	});
+
+	{
+		addSeparator();
+
+		auto *creditsButton = new ui::Button(ui::Point(10, currentY), ui::Point(90, 16), "Credits");
+		creditsButton->SetActionCallback({ [] {
+			auto *credits = new Credits();
+			ui::Engine::Ref().ShowWindow(credits);
+		} });
+		scrollPanel->AddChild(creditsButton);
+
+		addLabel(5, " - Find out who contributed to TPT");
+		currentY += 13;
+	}
+
+
 	{
 		ui::Button *ok = new ui::Button(ui::Point(0, Size.Y-16), ui::Point(Size.X, 16), "OK");
 		ok->SetActionCallback({ [this] {
@@ -371,7 +411,7 @@ void OptionsView::UpdateAmbientAirTempPreview(float airTemp, bool isValid)
 {
 	if (isValid)
 	{
-		ambientAirTempPreview->Appearance.BackgroundInactive = RGB<uint8_t>::Unpack(HeatToColour(airTemp)).WithAlpha(0xFF);
+		ambientAirTempPreview->Appearance.BackgroundInactive = RGB::Unpack(HeatToColour(airTemp)).WithAlpha(0xFF);
 		ambientAirTempPreview->SetText("");
 	}
 	else
@@ -388,6 +428,35 @@ void OptionsView::AmbientAirTempToTextBox(float airTemp)
 	sb << Format::Precision(2);
 	format::RenderTemperature(sb, airTemp, temperatureScale->GetOption().second);
 	ambientAirTemp->SetText(sb.Build());
+}
+
+void OptionsView::UpdateStartupRequestStatus()
+{
+	switch (Client::Ref().GetStartupRequestStatus())
+	{
+	case Client::StartupRequestStatus::notYetDone:
+		startupRequestStatus->SetText("\bg - Not yet fetched");
+		break;
+
+	case Client::StartupRequestStatus::inProgress:
+		startupRequestStatus->SetText("\bg - In progress...");
+		break;
+
+	case Client::StartupRequestStatus::succeeded:
+		startupRequestStatus->SetText(String::Build("\bg - OK, ", Client::Ref().GetServerNotifications().size(), " notifications fetched"));
+		break;
+
+	case Client::StartupRequestStatus::failed:
+		{
+			auto error = Client::Ref().GetStartupRequestError();
+			if (!error)
+			{
+				error = "???";
+			}
+			startupRequestStatus->SetText("\bg - Failed: " + error->FromUtf8());
+		}
+		break;
+	}
 }
 
 void OptionsView::UpdateAirTemp(String temp, bool isDefocus)
@@ -481,6 +550,10 @@ void OptionsView::NotifySettingsChanged(OptionsModel * sender)
 	{
 		fastquit->SetChecked(sender->GetFastQuit());
 	}
+	if (globalQuit)
+	{
+		globalQuit->SetChecked(sender->GetGlobalQuit());
+	}
 	if (nativeClipoard)
 	{
 		nativeClipoard->SetChecked(sender->GetNativeClipoard());
@@ -490,12 +563,20 @@ void OptionsView::NotifySettingsChanged(OptionsModel * sender)
 	includePressure->SetChecked(sender->GetIncludePressure());
 	perfectCircle->SetChecked(sender->GetPerfectCircle());
 	graveExitsConsole->SetChecked(sender->GetGraveExitsConsole());
+	threadedRendering->SetChecked(sender->GetThreadedRendering());
 	momentumScroll->SetChecked(sender->GetMomentumScroll());
+	redirectStd->SetChecked(sender->GetRedirectStd());
+	autoStartupRequest->SetChecked(sender->GetAutoStartupRequest());
 }
 
 void OptionsView::AttachController(OptionsController * c_)
 {
 	c = c_;
+}
+
+void OptionsView::OnTick()
+{
+	UpdateStartupRequestStatus();
 }
 
 void OptionsView::OnDraw()

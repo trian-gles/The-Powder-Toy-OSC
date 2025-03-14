@@ -79,6 +79,10 @@ namespace LuaSocket
 
 	static int New(lua_State *L)
 	{
+		// there's no actual architectural reason to require socket handles to be managed from interface events
+		// because the HTTP thread doesn't care what thread they are managed from, but requiring this
+		// makes access patterns cleaner, so we do it anyway
+		GetLSI()->AssertInterfaceEvent();
 		using http::HandleCURLMcode;
 		if (http::RequestManager::Ref().DisableNetwork())
 		{
@@ -113,6 +117,8 @@ namespace LuaSocket
 
 	static int GC(lua_State *L)
 	{
+		// not subject to the check in TCPSocket::New; that would be disastrous, and thankfully,
+		// as explained there, we're not missing out on any functionality either
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		Reset(tcps);
 		tcps->~TCPSocket();
@@ -121,6 +127,7 @@ namespace LuaSocket
 
 	static int Close(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		Reset(tcps);
 		return 0;
@@ -128,6 +135,7 @@ namespace LuaSocket
 
 	static int Send(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		if (tcps->status != StatusConnected)
 		{
@@ -156,7 +164,7 @@ namespace LuaSocket
 			CURLcode res = CURLE_OK;
 			if (!tcps->writeClosed)
 			{
-				res = curl_easy_send(tcps->easy, &data[0] + writtenTotal, len - writtenTotal, &writtenNow);
+				res = curl_easy_send(tcps->easy, data + writtenTotal, len - writtenTotal, &writtenNow);
 			}
 			writtenTotal += writtenNow;
 			if (writtenTotal >= len)
@@ -250,7 +258,7 @@ namespace LuaSocket
 			}
 			else
 			{
-				res = curl_easy_recv(tcps->easy, &tcps->recvBuf[0] + readTotal, len - readTotal, &readNow);
+				res = curl_easy_recv(tcps->easy, tcps->recvBuf.data() + readTotal, len - readTotal, &readNow);
 			}
 			readTotal += readNow;
 			returning = readTotal;
@@ -353,7 +361,7 @@ namespace LuaSocket
 			}
 			returning = curOut;
 		}
-		lua_pushlstring(L, &tcps->recvBuf[0], returning);
+		lua_pushlstring(L, tcps->recvBuf.data(), returning);
 		// * This copy makes ReceiveNoPrefix quadratic if there's a lot of stuff in
 		//   the stash (as a result of a *very* long line being returned by an "*L"
 		//   pattern and then whatever was left being stashed) and it's all *very*
@@ -361,15 +369,16 @@ namespace LuaSocket
 		//   of view of an "*L" pattern). Handling this edge case in a special,
 		//   sub-quadratic way isn't worth the effort.
 		std::copy(
-			&tcps->recvBuf[0] + readTotal - tcps->stashedLen,
-			&tcps->recvBuf[0] + readTotal,
-			&tcps->recvBuf[0]
+			tcps->recvBuf.data() + readTotal - tcps->stashedLen,
+			tcps->recvBuf.data() + readTotal,
+			tcps->recvBuf.data()
 		);
 		return retn;
 	}
 
 	static int Receive(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		bool prefix = false;
 		if (lua_gettop(L) >= 3)
 		{
@@ -388,6 +397,7 @@ namespace LuaSocket
 
 	static int Connect(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		using http::HandleCURLcode;
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		if (tcps->status == StatusDead)
@@ -479,6 +489,7 @@ namespace LuaSocket
 
 	static int LastError(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		lua_pushstring(L, tcps->errorBuf);
 		return 1;
@@ -486,6 +497,7 @@ namespace LuaSocket
 
 	static int GetStatus(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		switch (tcps->status)
 		{
@@ -499,6 +511,7 @@ namespace LuaSocket
 
 	static int GetPeerName(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		using http::HandleCURLcode;
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		if (tcps->status != StatusConnected)
@@ -516,6 +529,7 @@ namespace LuaSocket
 
 	static int SetTimeout(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		tcps->blocking = true;
 		if (lua_isnoneornil(L, 2))
@@ -536,6 +550,7 @@ namespace LuaSocket
 
 	static int GetSockName(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		using http::HandleCURLcode;
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		if (tcps->status != StatusConnected)
@@ -553,6 +568,7 @@ namespace LuaSocket
 
 	static int SetOption(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		using http::HandleCURLcode;
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		auto option = tpt_lua_checkByteString(L, 2);
@@ -583,6 +599,7 @@ namespace LuaSocket
 
 	static int Shutdown(lua_State *L)
 	{
+		GetLSI()->AssertInterfaceEvent(); // see the check in TCPSocket::New
 		auto *tcps = (TCPSocket *)luaL_checkudata(L, 1, "TCPSocket");
 		auto direction = tpt_lua_optByteString(L, 2, "both");
 		if (byteStringEqualsLiteral(direction, "receive"))
@@ -622,9 +639,9 @@ namespace LuaSocket
 			{  "settimeout", LuaSocket::SetTimeout  },
 			{   "setoption", LuaSocket::SetOption   },
 			{    "shutdown", LuaSocket::Shutdown    },
-			{          NULL, NULL                      },
+			{       nullptr, nullptr                },
 		};
-		luaL_register(L, NULL, tcpSocketIndexMethods);
+		luaL_register(L, nullptr, tcpSocketIndexMethods);
 		lua_setfield(L, -2, "__index");
 		lua_pop(L, 1);
 		lua_getglobal(L, "socket");

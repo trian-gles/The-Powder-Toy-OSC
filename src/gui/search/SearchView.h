@@ -42,6 +42,7 @@ private:
 	ui::Button * unpublishSelected;
 	ui::Button * favouriteSelected;
 	ui::Button * clearSelection;
+	void searchHelp();
 	void clearSearch();
 	void doSearch();
 	void textChanged();
@@ -66,7 +67,7 @@ public:
 	virtual ~SearchView();
 	void AttachController(SearchController * _c) { c = _c; }
 	virtual void Search(String);
-	void OnTick(float dt) override;
+	void OnTick() override;
 	void OnMouseWheel(int x, int y, int d) override;
 	void OnKeyPress(int key, int scan, bool repeat, bool shift, bool ctrl, bool alt) override;
 	void OnKeyRelease(int key, int scan, bool repeat, bool shift, bool ctrl, bool alt) override;

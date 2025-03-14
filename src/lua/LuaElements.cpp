@@ -324,6 +324,7 @@ static bool luaCtypeDrawWrapper(CTYPEDRAW_FUNC_ARGS)
 static int allocate(lua_State *L)
 {
 	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	luaL_checktype(L, 1, LUA_TSTRING);
 	luaL_checktype(L, 2, LUA_TSTRING);
 	auto group = tpt_lua_toByteString(L, 1).ToUpper();
@@ -399,6 +400,7 @@ static int allocate(lua_State *L)
 			lsi->customCanMove[elem][newID] = 0;
 			lsi->customCanMove[newID][elem] = 0;
 		}
+		lsi->gameModel->AllocElementTool(newID);
 		lsi->gameModel->BuildMenus();
 		lsi->InitCustomCanMove();
 	}
@@ -420,6 +422,7 @@ static int element(lua_State *L)
 
 	if (lua_gettop(L) > 1)
 	{
+		lsi->AssertInterfaceEvent();
 		{
 			auto &sd = SimulationData::Ref();
 			std::unique_lock lk(sd.elementGraphicsMx);
@@ -524,33 +527,31 @@ static int element(lua_State *L)
 
 			sd.graphicscache[id].isready = 0;
 		}
+		lsi->gameModel->UpdateElementTool(id);
 		lsi->gameModel->BuildMenus();
 		lsi->InitCustomCanMove();
 
 		return 0;
 	}
-	else
+	auto &sd = SimulationData::CRef();
+	auto &elements = sd.elements;
+	//Write values from native data to a table
+	lua_newtable(L);
+	for (auto &prop : Element::GetProperties())
 	{
-		auto &sd = SimulationData::CRef();
-		auto &elements = sd.elements;
-		//Write values from native data to a table
-		lua_newtable(L);
-		for (auto &prop : Element::GetProperties())
-		{
-			tpt_lua_pushByteString(L, prop.Name);
-			intptr_t propertyAddress = (intptr_t)(((unsigned char*)&elements[id]) + prop.Offset);
-			LuaGetProperty(L, prop, propertyAddress);
-			lua_settable(L, -3);
-		}
-
-		tpt_lua_pushByteString(L, elements[id].Identifier);
-		lua_setfield(L, -2, "Identifier");
-
-		getDefaultProperties(L, id);
-		lua_setfield(L, -2, "DefaultProperties");
-
-		return 1;
+		tpt_lua_pushByteString(L, prop.Name);
+		intptr_t propertyAddress = (intptr_t)(((unsigned char*)&elements[id]) + prop.Offset);
+		LuaGetProperty(L, prop, propertyAddress);
+		lua_settable(L, -3);
 	}
+
+	tpt_lua_pushByteString(L, elements[id].Identifier);
+	lua_setfield(L, -2, "Identifier");
+
+	getDefaultProperties(L, id);
+	lua_setfield(L, -2, "DefaultProperties");
+
+	return 1;
 }
 
 static int property(lua_State *L)
@@ -572,6 +573,7 @@ static int property(lua_State *L)
 
 	if (lua_gettop(L) > 2)
 	{
+		lsi->AssertInterfaceEvent();
 		auto &sd = SimulationData::Ref();
 		std::unique_lock lk(sd.elementGraphicsMx);
 		auto &elements = sd.elements;
@@ -591,6 +593,7 @@ static int property(lua_State *L)
 				manageElementIdentifier(L, id, false);
 				LuaSetProperty(L, *prop, propertyAddress, 3);
 				manageElementIdentifier(L, id, true);
+				lsi->gameModel->UpdateElementTool(id);
 				lsi->gameModel->BuildMenus();
 				lsi->InitCustomCanMove();
 				sd.graphicscache[id].isready = 0;
@@ -700,35 +703,32 @@ static int property(lua_State *L)
 		}
 		return 0;
 	}
-	else
+	auto &sd = SimulationData::CRef();
+	auto &elements = sd.elements;
+	if (prop != properties.end())
 	{
-		auto &sd = SimulationData::CRef();
-		auto &elements = sd.elements;
-		if (prop != properties.end())
-		{
-			intptr_t propertyAddress = (intptr_t)(((const unsigned char*)&elements[id]) + prop->Offset);
-			LuaGetProperty(L, *prop, propertyAddress);
-			return 1;
-		}
-		else if (propertyName == "Identifier")
-		{
-			tpt_lua_pushByteString(L, elements[id].Identifier);
-			return 1;
-		}
-		else if (propertyName == "DefaultProperties")
-		{
-			getDefaultProperties(L, id);
-			return 1;
-		}
-		else
-		{
-			return luaL_error(L, "Invalid element property");
-		}
+		intptr_t propertyAddress = (intptr_t)(((const unsigned char*)&elements[id]) + prop->Offset);
+		LuaGetProperty(L, *prop, propertyAddress);
+		return 1;
 	}
+	else if (propertyName == "Identifier")
+	{
+		tpt_lua_pushByteString(L, elements[id].Identifier);
+		return 1;
+	}
+	else if (propertyName == "DefaultProperties")
+	{
+		getDefaultProperties(L, id);
+		return 1;
+	}
+	return luaL_error(L, "Invalid element property");
 }
 
 static int ffree(lua_State *L)
 {
+	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
+
 	int id = luaL_checkinteger(L, 1);
 	ByteString identifier;
 	{
@@ -750,7 +750,8 @@ static int ffree(lua_State *L)
 		std::unique_lock lk(sd.elementGraphicsMx);
 		sd.elements[id].Enabled = false;
 	}
-	auto *lsi = GetLSI();
+	lsi->customElements[id] = {};
+	lsi->gameModel->FreeTool(lsi->gameModel->GetToolFromIdentifier(identifier));
 	lsi->gameModel->BuildMenus();
 
 	lua_getglobal(L, "elements");
@@ -771,13 +772,14 @@ static int exists(lua_State *L)
 
 static int loadDefault(lua_State *L)
 {
+	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	auto &sd = SimulationData::Ref();
 	std::unique_lock lk(sd.elementGraphicsMx);
 	auto &elements = sd.elements;
 	auto &builtinElements = GetElements();
-	auto *lsi = GetLSI();
 	{
-		auto loadDefaultOne = [L, &elements, &builtinElements](int id) {
+		auto loadDefaultOne = [lsi, L, &elements, &builtinElements](int id) {
 			lua_getglobal(L, "elements");
 			ByteString identifier = elements[id].Identifier;
 			tpt_lua_pushByteString(L, identifier);
@@ -786,9 +788,14 @@ static int loadDefault(lua_State *L)
 
 			manageElementIdentifier(L, id, false);
 			if (id < (int)builtinElements.size())
+			{
 				elements[id] = builtinElements[id];
+			}
 			else
+			{
 				elements[id] = Element();
+				lsi->gameModel->FreeTool(lsi->gameModel->GetToolFromIdentifier(identifier));
+			}
 			manageElementIdentifier(L, id, true);
 
 			tpt_lua_pushByteString(L, identifier);
@@ -846,10 +853,10 @@ void LuaElements::Open(lua_State *L)
 		LFUNC(getByName),
 #undef LFUNC
 		{ "free", ffree },
-		{ NULL, NULL }
+		{ nullptr, nullptr }
 	};
 	lua_newtable(L);
-	luaL_register(L, NULL, reg);
+	luaL_register(L, nullptr, reg);
 #define LCONST(v) lua_pushinteger(L, int(v)); lua_setfield(L, -2, #v)
 #define LCONSTAS(k, v) lua_pushinteger(L, int(v)); lua_setfield(L, -2, k)
 	LCONST(TYPE_PART);

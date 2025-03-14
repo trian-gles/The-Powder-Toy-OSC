@@ -12,7 +12,7 @@ Luna<LuaCheckbox>::RegType LuaCheckbox::methods[] = {
 	method(LuaCheckbox, size),
 	method(LuaCheckbox, visible),
 	method(LuaCheckbox, checked),
-	{0, 0}
+	{nullptr, nullptr}
 };
 
 LuaCheckbox::LuaCheckbox(lua_State *L) :
@@ -71,7 +71,7 @@ void LuaCheckbox::triggerAction()
 		lua_rawgeti(L, LUA_REGISTRYINDEX, actionFunction);
 		lua_rawgeti(L, LUA_REGISTRYINDEX, owner_ref);
 		lua_pushboolean(L, checkbox->GetChecked());
-		if (tpt_lua_pcall(L, 2, 0, 0, eventTraitNone))
+		if (tpt_lua_pcall(L, 2, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}

@@ -32,7 +32,7 @@ Luna<LuaWindow>::RegType LuaWindow::methods[] = {
 	method(LuaWindow, onMouseWheel),
 	method(LuaWindow, onKeyPress),
 	method(LuaWindow, onKeyRelease),
-	{0, 0}
+	{nullptr, nullptr}
 };
 
 LuaWindow::LuaWindow(lua_State *L)
@@ -69,7 +69,7 @@ LuaWindow::LuaWindow(lua_State *L)
 		}
 		void OnInitialized() override { luaWindow->triggerOnInitialized(); }
 		void OnExit() override { luaWindow->triggerOnExit(); }
-		void OnTick(float dt) override { luaWindow->triggerOnTick( dt); }
+		void OnTick() override { luaWindow->triggerOnTick(); }
 		void OnFocus() override { luaWindow->triggerOnFocus(); }
 		void OnBlur() override { luaWindow->triggerOnBlur(); }
 		void OnTryExit(ExitMethod) override { luaWindow->triggerOnTryExit(); }
@@ -207,7 +207,7 @@ void LuaWindow::triggerOnInitialized()
 	if(onInitializedFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onInitializedFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -219,20 +219,20 @@ void LuaWindow::triggerOnExit()
 	if(onExitFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onExitFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
 	}
 }
 
-void LuaWindow::triggerOnTick(float dt)
+void LuaWindow::triggerOnTick()
 {
 	if(onTickFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onTickFunction);
-		lua_pushnumber(L, dt);
-		if(tpt_lua_pcall(L, 1, 0, 0, eventTraitNone))
+		lua_pushnumber(L, 1); // this used to be dt, which was measured in 60ths of a second; this hardcodes 60fps
+		if(tpt_lua_pcall(L, 1, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -244,7 +244,7 @@ void LuaWindow::triggerOnDraw()
 	if(onDrawFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onDrawFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -256,7 +256,7 @@ void LuaWindow::triggerOnFocus()
 	if(onFocusFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onFocusFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -268,7 +268,7 @@ void LuaWindow::triggerOnBlur()
 	if(onBlurFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onBlurFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -280,7 +280,7 @@ void LuaWindow::triggerOnTryExit()
 	if(onTryExitFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onTryExitFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -292,7 +292,7 @@ void LuaWindow::triggerOnTryOkay()
 	if(onTryOkayFunction)
 	{
 		lua_rawgeti(L, LUA_REGISTRYINDEX, onTryOkayFunction);
-		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 0, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -308,7 +308,7 @@ void LuaWindow::triggerOnMouseMove(int x, int y, int dx, int dy)
 		lua_pushinteger(L, y);
 		lua_pushinteger(L, dx);
 		lua_pushinteger(L, dy);
-		if(tpt_lua_pcall(L, 4, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 4, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -323,7 +323,7 @@ void LuaWindow::triggerOnMouseDown(int x, int y, unsigned button)
 		lua_pushinteger(L, x);
 		lua_pushinteger(L, y);
 		lua_pushinteger(L, button);
-		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -338,7 +338,7 @@ void LuaWindow::triggerOnMouseUp(int x, int y, unsigned button)
 		lua_pushinteger(L, x);
 		lua_pushinteger(L, y);
 		lua_pushinteger(L, button);
-		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -353,7 +353,7 @@ void LuaWindow::triggerOnMouseWheel(int x, int y, int d)
 		lua_pushinteger(L, x);
 		lua_pushinteger(L, y);
 		lua_pushinteger(L, d);
-		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 3, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -370,7 +370,7 @@ void LuaWindow::triggerOnKeyPress(int key, int scan, bool repeat, bool shift, bo
 		lua_pushboolean(L, shift);
 		lua_pushboolean(L, ctrl);
 		lua_pushboolean(L, alt);
-		if(tpt_lua_pcall(L, 5, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 5, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}
@@ -387,7 +387,7 @@ void LuaWindow::triggerOnKeyRelease(int key, int scan, bool repeat, bool shift, 
 		lua_pushboolean(L, shift);
 		lua_pushboolean(L, ctrl);
 		lua_pushboolean(L, alt);
-		if(tpt_lua_pcall(L, 5, 0, 0, eventTraitNone))
+		if(tpt_lua_pcall(L, 5, 0, 0, eventTraitInterface))
 		{
 			ci->Log(CommandInterface::LogError, tpt_lua_toString(L, -1));
 		}

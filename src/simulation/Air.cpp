@@ -28,14 +28,14 @@ void Air::make_kernel(void) //used for velocity
 
 void Air::Clear()
 {
-	std::fill(&pv[0][0], &pv[0][0]+NCELL, 0.0f);
-	std::fill(&vy[0][0], &vy[0][0]+NCELL, 0.0f);
-	std::fill(&vx[0][0], &vx[0][0]+NCELL, 0.0f);
+	std::fill(&sim.pv[0][0], &sim.pv[0][0]+NCELL, 0.0f);
+	std::fill(&sim.vy[0][0], &sim.vy[0][0]+NCELL, 0.0f);
+	std::fill(&sim.vx[0][0], &sim.vx[0][0]+NCELL, 0.0f);
 }
 
 void Air::ClearAirH()
 {
-	std::fill(&hv[0][0], &hv[0][0]+NCELL, ambientAirTemp);
+	std::fill(&sim.hv[0][0], &sim.hv[0][0]+NCELL, ambientAirTemp);
 }
 
 // Used when updating temp or velocity from far away
@@ -43,6 +43,9 @@ const float advDistanceMult = 0.7f;
 
 void Air::update_airh(void)
 {
+	auto &vx = sim.vx;
+	auto &vy = sim.vy;
+	auto &hv = sim.hv;
 	for (auto i=0; i<YCELLS; i++) //sets air temp on the edges every frame
 	{
 		hv[i][0] = ambientAirTemp;
@@ -89,7 +92,7 @@ void Air::update_airh(void)
 			// The code is almost identical to the "far away" velocity code from update_air
 			auto tx = x - dx*advDistanceMult;
 			auto ty = y - dy*advDistanceMult;
-			if ((dx*advDistanceMult>1.0f || dy*advDistanceMult>1.0f) && (tx>=2 && tx<XCELLS-2 && ty>=2 && ty<YCELLS-2))
+			if ((std::abs(dx*advDistanceMult)>1.0f || std::abs(dy*advDistanceMult)>1.0f) && (tx>=2 && tx<XCELLS-2 && ty>=2 && ty<YCELLS-2))
 			{
 				float stepX, stepY;
 				int stepLimit;
@@ -130,7 +133,7 @@ void Air::update_airh(void)
 			auto j = (int)ty;
 			tx -= i;
 			ty -= j;
-			if (!(bmap_blockairh[y][x]&0x8) && i>=2 && i<=XCELLS-3 && j>=2 && j<=YCELLS-3)
+			if (!(bmap_blockairh[y][x]&0x8) && i>=2 && i<XCELLS-3 && j>=2 && j<YCELLS-3)
 			{
 				auto odh = dh;
 				dh *= 1.0f - AIR_VADV;
@@ -157,7 +160,7 @@ void Air::update_airh(void)
 				auto weight = (hv[y][x] - ambientAirTemp) / 10000.0f;
 
 				// Our approximation works best when the temperature difference is small, so we cap it from above.
-				if (weight > 0.1f) weight = 0.1f;
+				if (weight > 0.01f) weight = 0.01f;
 
 				vx[y][x] += weight * convGravX;
 				vy[y][x] += weight * convGravY;
@@ -169,6 +172,12 @@ void Air::update_airh(void)
 
 void Air::update_air(void)
 {
+	auto &vx = sim.vx;
+	auto &vy = sim.vy;
+	auto &pv = sim.pv;
+	auto &fvx = sim.fvx;
+	auto &fvy = sim.fvy;
+	auto &bmap = sim.bmap;
 	if (airMode != AIR_NOUPDATE) //airMode 4 is no air/pressure update
 	{
 		for (auto i=0; i<YCELLS; i++) //reduces pressure/velocity on the edges every frame
@@ -281,7 +290,7 @@ void Air::update_air(void)
 
 				auto tx = x - dx*advDistanceMult;
 				auto ty = y - dy*advDistanceMult;
-				if ((dx*advDistanceMult>1.0f || dy*advDistanceMult>1.0f) && (tx>=2 && tx<XCELLS-2 && ty>=2 && ty<YCELLS-2))
+				if ((std::abs(dx*advDistanceMult)>1.0f || std::abs(dy*advDistanceMult)>1.0f) && (tx>=2 && tx<XCELLS-2 && ty>=2 && ty<YCELLS-2))
 				{
 					// Trying to take velocity from far away, check whether there is an intervening wall.
 					// Step from current position to desired source location, looking for walls, with either the x or y step size being 1 cell
@@ -324,7 +333,7 @@ void Air::update_air(void)
 				auto j = (int)ty;
 				tx -= i;
 				ty -= j;
-				if (!bmap_blockair[y][x] && i>=2 && i<=XCELLS-3 && j>=2 && j<=YCELLS-3)
+				if (!bmap_blockair[y][x] && i>=2 && i<XCELLS-3 && j>=2 && j<YCELLS-3)
 				{
 					dx *= 1.0f - AIR_VADV;
 					dy *= 1.0f - AIR_VADV;
@@ -390,6 +399,9 @@ void Air::update_air(void)
 
 void Air::Invert()
 {
+	auto &vx = sim.vx;
+	auto &vy = sim.vy;
+	auto &pv = sim.pv;
 	for (auto nx = 0; nx<XCELLS; nx++)
 	{
 		for (auto ny = 0; ny<YCELLS; ny++)
@@ -406,7 +418,7 @@ void Air::ApproximateBlockAirMaps()
 {
 	auto &sd = SimulationData::CRef();
 	auto &elements = sd.elements;
-	for (int i = 0; i <= sim.parts_lastActiveIndex; i++)
+	for (int i = 0; i <= sim.parts.lastActiveIndex; i++)
 	{
 		int type = sim.parts[i].type;
 		if (!type)
@@ -424,7 +436,7 @@ void Air::ApproximateBlockAirMaps()
 			}
 		}
 		// mostly accurate insulator blocking, besides checking GEL
-		else if ((type == PT_HSWC && sim.parts[i].life != 10) || elements[type].HeatConduct <= (sim.rng()%250))
+		else if (sim.IsHeatInsulator(sim.parts[i]) || elements[type].HeatConduct <= (sim.rng()%250))
 		{
 			int x = ((int)(sim.parts[i].x+0.5f))/CELL, y = ((int)(sim.parts[i].y+0.5f))/CELL;
 			if (InBounds(x, y) && !(bmap_blockairh[y][x]&0x8))
@@ -440,14 +452,14 @@ Air::Air(Simulation & simulation):
 {
 	//Simulation should do this.
 	make_kernel();
-	std::fill(&bmap_blockair[0][0], &bmap_blockair[0][0]+NCELL, 0);
-	std::fill(&bmap_blockairh[0][0], &bmap_blockairh[0][0]+NCELL, 0);
-	std::fill(&vx[0][0], &vx[0][0]+NCELL, 0.0f);
-	std::fill(&ovx[0][0], &ovx[0][0]+NCELL, 0.0f);
-	std::fill(&vy[0][0], &vy[0][0]+NCELL, 0.0f);
-	std::fill(&ovy[0][0], &ovy[0][0]+NCELL, 0.0f);
-	std::fill(&hv[0][0], &hv[0][0]+NCELL, 0.0f);
-	std::fill(&ohv[0][0], &ohv[0][0]+NCELL, 0.0f);
-	std::fill(&pv[0][0], &pv[0][0]+NCELL, 0.0f);
-	std::fill(&opv[0][0], &opv[0][0]+NCELL, 0.0f);
+	std::fill(&bmap_blockair [0][0], &bmap_blockair [0][0] + NCELL, 0);
+	std::fill(&bmap_blockairh[0][0], &bmap_blockairh[0][0] + NCELL, 0);
+	std::fill(&sim.vx[0][0], &sim.vx[0][0] + NCELL, 0.0f);
+	std::fill(&ovx   [0][0], &ovx   [0][0] + NCELL, 0.0f);
+	std::fill(&sim.vy[0][0], &sim.vy[0][0] + NCELL, 0.0f);
+	std::fill(&ovy   [0][0], &ovy   [0][0] + NCELL, 0.0f);
+	std::fill(&sim.hv[0][0], &sim.hv[0][0] + NCELL, 0.0f);
+	std::fill(&ohv   [0][0], &ohv   [0][0] + NCELL, 0.0f);
+	std::fill(&sim.pv[0][0], &sim.pv[0][0] + NCELL, 0.0f);
+	std::fill(&opv   [0][0], &opv   [0][0] + NCELL, 0.0f);
 }

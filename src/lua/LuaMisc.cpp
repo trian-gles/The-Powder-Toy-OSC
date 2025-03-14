@@ -1,7 +1,7 @@
 #include "LuaScriptInterface.h"
 #include "client/http/Request.h"
 #include "common/platform/Platform.h"
-#include "compat.lua.h"
+#include "compat_lua.h"
 #include "Config.h"
 #include "gui/dialogues/ErrorMessage.h"
 #include "gui/dialogues/InformationMessage.h"
@@ -13,6 +13,7 @@
 static int getUserName(lua_State *L)
 {
 	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	if (lsi->gameModel->GetUser().UserID)
 	{
 		tpt_lua_pushByteString(L, lsi->gameModel->GetUser().Username);
@@ -25,6 +26,7 @@ static int getUserName(lua_State *L)
 static int installScriptManager(lua_State *L)
 {
 	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	if (lsi->scriptManagerDownload)
 	{
 		new ErrorMessage("Script download", "A script download is already pending");
@@ -36,7 +38,7 @@ static int installScriptManager(lua_State *L)
 		new ErrorMessage("Script download", "You must run this function from the console");
 		return 0;
 	}
-	lsi->scriptManagerDownload = std::make_unique<http::Request>(ByteString::Build(SCHEME, "starcatcher.us/scripts/main.lua?get=1"));
+	lsi->scriptManagerDownload = std::make_unique<http::Request>(ByteString::Build("https://starcatcher.us/scripts/main.lua?get=1"));
 	lsi->scriptManagerDownload->Start();
 	return 0;
 }
@@ -96,14 +98,15 @@ void LuaMisc::Tick(lua_State *L)
 				return;
 			}
 			ByteString filename = "autorun.lua";
-			if (!Platform::WriteFile(std::vector<char>(scriptData.begin(), scriptData.end()), filename))
+			if (!Platform::WriteFile(scriptData, filename))
 			{
 				complete({ Status::GetFailed{ String::Build("Unable to write to ", filename.FromUtf8()) } });
 				return;
 			}
-			if (tpt_lua_dostring(L, ByteString::Build("dofile('", filename, "')")))
+			if (lsi->Autorun())
 			{
 				complete({ Status::RunFailed{ LuaGetError() } });
+				lua_pop(lsi->L, 1);
 				return;
 			}
 			complete({ Status::Ok{} });
@@ -151,10 +154,11 @@ static int flog(lua_State *L)
 
 static int screenshot(lua_State *L)
 {
+	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	int captureUI = luaL_optint(L, 1, 0);
 	int fileType = luaL_optint(L, 2, 0);
 
-	auto *lsi = GetLSI();
 	ByteString filename = lsi->gameController->TakeScreenshot(captureUI, fileType);
 	if (filename.size())
 	{
@@ -166,10 +170,11 @@ static int screenshot(lua_State *L)
 
 static int record(lua_State *L)
 {
+	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	if (!lua_isboolean(L, -1))
 		return luaL_typerror(L, 1, lua_typename(L, LUA_TBOOLEAN));
 	bool record = lua_toboolean(L, -1);
-	auto *lsi = GetLSI();
 	int recordingFolder = lsi->gameController->Record(record);
 	lua_pushinteger(L, recordingFolder);
 	return 1;
@@ -177,12 +182,14 @@ static int record(lua_State *L)
 
 static int compatChunk(lua_State *L)
 {
-	lua_pushlstring(L, reinterpret_cast<const char *>(compat_lua), compat_lua_size);
+	auto data = compat_lua.AsCharSpan();
+	lua_pushlstring(L, data.data(), data.size());
 	return 1;
 }
 static int debug(lua_State *L)
 {
 	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	int acount = lua_gettop(L);
 	if (acount == 0)
 	{
@@ -196,15 +203,13 @@ static int debug(lua_State *L)
 
 static int fpsCap(lua_State *L)
 {
+	auto *lsi = GetLSI();
+	lsi->AssertInterfaceEvent();
 	int acount = lua_gettop(L);
 	if (acount == 0)
 	{
-		auto fpsLimit = ui::Engine::Ref().GetFpsLimit();
-		if (std::holds_alternative<FpsLimitVsync>(fpsLimit))
-		{
-			lua_pushliteral(L, "vsync");
-		}
-		else if (std::holds_alternative<FpsLimitNone>(fpsLimit))
+		auto fpsLimit = lsi->window->GetSimFpsLimit();
+		if (std::holds_alternative<FpsLimitNone>(fpsLimit))
 		{
 			lua_pushnumber(L, 2);
 		}
@@ -214,11 +219,6 @@ static int fpsCap(lua_State *L)
 		}
 		return 1;
 	}
-	if (lua_isstring(L, 1) && byteStringEqualsLiteral(tpt_lua_toByteString(L, 1), "vsync"))
-	{
-		ui::Engine::Ref().SetFpsLimit(FpsLimitVsync{});
-		return 0;
-	}
 	float fpscap = luaL_checknumber(L, 1);
 	if (fpscap < 2)
 	{
@@ -226,25 +226,49 @@ static int fpsCap(lua_State *L)
 	}
 	if (fpscap == 2)
 	{
-		ui::Engine::Ref().SetFpsLimit(FpsLimitNone{});
+		lsi->window->SetSimFpsLimit(FpsLimitNone{});
 		return 0;
 	}
-	ui::Engine::Ref().SetFpsLimit(FpsLimitExplicit{ fpscap });
+	lsi->window->SetSimFpsLimit(FpsLimitExplicit{ fpscap });
 	return 0;
 }
 
 static int drawCap(lua_State *L)
 {
+	GetLSI()->AssertInterfaceEvent();
 	int acount = lua_gettop(L);
 	if (acount == 0)
 	{
-		lua_pushinteger(L, ui::Engine::Ref().GetDrawingFrequencyLimit());
+		auto drawLimit = ui::Engine::Ref().GetDrawingFrequencyLimit();
+		if (std::holds_alternative<DrawLimitDisplay>(drawLimit))
+		{
+			lua_pushliteral(L, "display");
+		}
+		else if (std::holds_alternative<DrawLimitNone>(drawLimit))
+		{
+			lua_pushinteger(L, 0);
+		}
+		else
+		{
+			lua_pushinteger(L, std::get<DrawLimitExplicit>(drawLimit).value);
+		}
 		return 1;
 	}
-	int drawcap = luaL_checkint(L, 1);
+	// if (lua_isstring(L, 1) && byteStringEqualsLiteral(tpt_lua_toByteString(L, 1), "vsync")) // TODO: DrawLimitVsync
+	if (lua_isstring(L, 1) && byteStringEqualsLiteral(tpt_lua_toByteString(L, 1), "display"))
+	{
+		ui::Engine::Ref().SetDrawingFrequencyLimit(DrawLimitDisplay{});
+		return 0;
+	}
+	int drawcap = luaL_checkinteger(L, 1);
 	if(drawcap < 0)
 		return luaL_error(L, "draw cap too small");
-	ui::Engine::Ref().SetDrawingFrequencyLimit(drawcap);
+	if (drawcap == 0)
+	{
+		ui::Engine::Ref().SetDrawingFrequencyLimit(DrawLimitNone{});
+		return 0;
+	}
+	ui::Engine::Ref().SetDrawingFrequencyLimit(DrawLimitExplicit{ drawcap });
 	return 0;
 }
 
@@ -262,16 +286,19 @@ void LuaMisc::Open(lua_State *L)
 		LFUNC(compatChunk),
 #undef LFUNC
 		{ "log", flog },
-		{ NULL, NULL }
+		{ nullptr, nullptr }
 	};
 	lua_newtable(L);
-	luaL_register(L, NULL, reg);
+	luaL_register(L, nullptr, reg);
 #define LCONST(v) lua_pushinteger(L, int(v)); lua_setfield(L, -2, #v)
 	LCONST(DEBUG_PARTS);
 	LCONST(DEBUG_ELEMENTPOP);
 	LCONST(DEBUG_LINES);
 	LCONST(DEBUG_PARTICLE);
 	LCONST(DEBUG_SURFNORM);
+	LCONST(DEBUG_SIMHUD);
+	LCONST(DEBUG_RENHUD);
+	LCONST(DEBUG_AIRVEL);
 #undef LCONST
 	{
 		lua_newtable(L);
@@ -294,6 +321,8 @@ void LuaMisc::Open(lua_State *L)
 			tpt_lua_pushByteString(L, vcsTag);
 			lua_setfield(L, -2, "vcstag");
 		}
+		lua_pushstring(L, PACKAGE_MODE);
+		lua_setfield(L, -2, "packagemode");
 		lua_setfield(L, -2, "version");
 	}
 	lua_setglobal(L, "tpt");

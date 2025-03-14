@@ -49,10 +49,10 @@ struct SnapshotDelta
 	HunkVector<uint32_t> commonParticles;
 	std::vector<Particle> extraPartsOld, extraPartsNew;
 
-	HunkVector<float> GravVelocityX;
-	HunkVector<float> GravVelocityY;
-	HunkVector<float> GravValue;
-	HunkVector<float> GravMap;
+	HunkVector<float> GravMass;
+	HunkVector<uint32_t> GravMask;
+	HunkVector<float> GravForceX;
+	HunkVector<float> GravForceY;
 
 	HunkVector<unsigned char> BlockMap;
 	HunkVector<unsigned char> ElecMap;

@@ -1,7 +1,8 @@
 #include "GameView.h"
 
 #include "Brush.h"
-#include "DecorationTool.h"
+#include "tool/DecorationTool.h"
+#include "tool/PropertyTool.h"
 #include "Favorite.h"
 #include "Format.h"
 #include "GameController.h"
@@ -13,6 +14,7 @@
 #include "Notification.h"
 #include "ToolButton.h"
 #include "QuickOptions.h"
+#include "PowderToySDL.h"
 
 #include "client/SaveInfo.h"
 #include "client/SaveFile.h"
@@ -21,11 +23,13 @@
 #include "common/platform/Platform.h"
 #include "graphics/Graphics.h"
 #include "graphics/Renderer.h"
+#include "graphics/VideoBuffer.h"
 #include "gui/Style.h"
 #include "simulation/ElementClasses.h"
 #include "simulation/ElementDefs.h"
 #include "simulation/SaveRenderer.h"
 #include "simulation/SimulationData.h"
+#include "simulation/Simulation.h"
 
 #include "gui/dialogues/ConfirmPrompt.h"
 #include "gui/dialogues/ErrorMessage.h"
@@ -177,21 +181,16 @@ GameView::GameView():
 	wallBrush(false),
 	toolBrush(false),
 	decoBrush(false),
-	windTool(false),
 	toolIndex(0),
 	currentSaveType(0),
 	lastMenu(-1),
 
-	toolTipPresence(0),
 	toolTip(""),
 	isToolTipFadingIn(false),
 	toolTipPosition(-1, -1),
-	infoTipPresence(0),
 	infoTip(""),
-	buttonTipShow(0),
 	buttonTip(""),
 	isButtonTipFadingIn(false),
-	introText(2048),
 	introTextMessage(IntroText().FromUtf8()),
 
 	doScreenshot(false),
@@ -202,8 +201,7 @@ GameView::GameView():
 	recordingFolder(0),
 	currentPoint(ui::Point(0, 0)),
 	lastPoint(ui::Point(0, 0)),
-	ren(NULL),
-	activeBrush(NULL),
+	activeBrush(nullptr),
 	saveSimulationButtonEnabled(false),
 	saveReuploadAllowed(true),
 	drawMode(DrawPoints),
@@ -215,6 +213,7 @@ GameView::GameView():
 	currentMouse(0, 0),
 	mousePosition(0, 0)
 {
+	contributesToFps = true;
 
 	int currentX = 1;
 	//Set up UI
@@ -266,21 +265,23 @@ GameView::GameView():
 	SetSaveButtonTooltips();
 	AddComponent(saveSimulationButton);
 
-	upVoteButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(39, 15), "", "Like this save");
+	upVoteButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(39, 15), "", "");
 	upVoteButton->SetIcon(IconVoteUp);
 	upVoteButton->Appearance.Margin.Top+=2;
 	upVoteButton->Appearance.Margin.Left+=2;
 	currentX+=38;
 	AddComponent(upVoteButton);
 
-	downVoteButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(15, 15), "", "Dislike this save");
+	downVoteButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(15, 15), "", "");
 	downVoteButton->SetIcon(IconVoteDown);
 	downVoteButton->Appearance.Margin.Bottom+=2;
 	downVoteButton->Appearance.Margin.Left+=2;
 	currentX+=16;
 	AddComponent(downVoteButton);
 
-	tagSimulationButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(227, 15), "[no tags set]", "Add simulation tags");
+	ResetVoteButtons();
+
+	tagSimulationButton = new ui::Button(ui::Point(currentX, Size.Y-16), ui::Point(WINDOWW - 402, 15), "[no tags set]", "Add simulation tags");
 	tagSimulationButton->Appearance.HorizontalAlign = ui::Appearance::AlignLeft;
 	tagSimulationButton->SetIcon(IconTag);
 	//currentX+=252;
@@ -302,7 +303,7 @@ GameView::GameView():
 	});
 	AddComponent(loginButton);
 
-	simulationOptionButton = new ui::Button(ui::Point(Size.X-48, Size.Y-16), ui::Point(15, 15), "", "Simulation options");
+	simulationOptionButton = new ui::Button(ui::Point(Size.X-48, Size.Y-16), ui::Point(15, 15), "", "Settings");
 	simulationOptionButton->SetIcon(IconSimulationSettings);
 	simulationOptionButton->Appearance.Margin.Left+=2;
 	simulationOptionButton->SetActionCallback({ [this] { c->OpenOptions(); } });
@@ -331,6 +332,7 @@ GameView::GameView():
 
 GameView::~GameView()
 {
+	StopRendererThread();
 	if(!colourPicker->GetParentWindow())
 		delete colourPicker;
 
@@ -469,8 +471,7 @@ bool GameView::GetBrushEnable()
 void GameView::SetDebugHUD(bool mode)
 {
 	showDebug = mode;
-	if (ren)
-		ren->debugLines = showDebug;
+	rendererSettings->debugLines = showDebug;
 }
 
 bool GameView::GetDebugHUD()
@@ -517,9 +518,10 @@ void GameView::NotifyActiveToolsChanged(GameModel * sender)
 
 	decoBrush = sender->GetActiveTool(0)->Identifier.BeginsWith("DEFAULT_DECOR_");
 
-	if (sender->GetRenderer()->findingElement)
+	auto &settings = sender->GetRendererSettings();
+	if (settings.findingElement)
 	{
-		ren->findingElement = FindingElementCandidate();
+		settings.findingElement = FindingElementCandidate();
 	}
 }
 
@@ -532,7 +534,7 @@ void GameView::NotifyLastToolChanged(GameModel * sender)
 	}
 }
 
-void GameView::NotifyToolListChanged(GameModel * sender)
+void GameView::NotifyActiveMenuToolListChanged(GameModel * sender)
 {
 	for (size_t i = 0; i < menuButtons.size(); i++)
 	{
@@ -551,7 +553,7 @@ void GameView::NotifyToolListChanged(GameModel * sender)
 		delete toolButtons[i];
 	}
 	toolButtons.clear();
-	std::vector<Tool*> toolList = sender->GetToolList();
+	std::vector<Tool*> toolList = sender->GetActiveMenuToolList();
 	int currentX = 0;
 	for (size_t i = 0; i < toolList.size(); i++)
 	{
@@ -561,7 +563,7 @@ void GameView::NotifyToolListChanged(GameModel * sender)
 
 		//get decotool texture manually, since it changes depending on it's own color
 		if (sender->GetActiveMenu() == SC_DECO)
-			tempTexture = ((DecorationTool*)tool)->GetIcon(tool->ToolID, Vec2(26, 14));
+			tempTexture = static_cast<DecorationTool *>(tool)->GetIcon(tool->ToolID, Vec2(26, 14));
 
 		if (tempTexture)
 			tempButton = new ToolButton(ui::Point(currentX, YRES+1), ui::Point(30, 18), "", tool->Identifier, tool->Description);
@@ -600,7 +602,7 @@ void GameView::NotifyToolListChanged(GameModel * sender)
 					else if (identifier.BeginsWith("DEFAULT_PT_LIFECUST_"))
 					{
 						new ConfirmPrompt("Remove custom GOL type", "Are you sure you want to remove " + identifier.Substr(20).FromUtf8() + "?", { [this, identifier]() {
-							c->RemoveCustomGOLType(identifier);
+							c->RemoveCustomGol(identifier);
 						} });
 					}
 				}
@@ -658,11 +660,11 @@ void GameView::NotifyColourSelectorVisibilityChanged(GameModel * sender)
 	{
 		ToolButton * button = *iter;
 		RemoveComponent(button);
-		button->SetParentWindow(NULL);
+		button->SetParentWindow(nullptr);
 	}
 
 	RemoveComponent(colourPicker);
-	colourPicker->SetParentWindow(NULL);
+	colourPicker->SetParentWindow(nullptr);
 
 	if(sender->GetColourSelectorVisibility())
 	{
@@ -727,17 +729,19 @@ void GameView::NotifyColourSelectorColourChanged(GameModel * sender)
 {
 	colourPicker->Appearance.BackgroundInactive = sender->GetColourSelectorColour();
 	colourPicker->Appearance.BackgroundHover = sender->GetColourSelectorColour();
-	NotifyToolListChanged(sender);
+	NotifyActiveMenuToolListChanged(sender);
 }
 
 void GameView::NotifyRendererChanged(GameModel * sender)
 {
 	ren = sender->GetRenderer();
+	rendererFrame = &ren->GetVideo();
+	rendererSettings = &sender->GetRendererSettings();
 }
 
 void GameView::NotifySimulationChanged(GameModel * sender)
 {
-
+	sim = sender->GetSimulation();
 }
 void GameView::NotifyUserChanged(GameModel * sender)
 {
@@ -762,6 +766,7 @@ void GameView::NotifyUserChanged(GameModel * sender)
 void GameView::NotifyPausedChanged(GameModel * sender)
 {
 	pauseButton->SetToggleState(sender->GetPaused());
+	ApplySimFpsLimit();
 }
 
 void GameView::NotifyToolTipChanged(GameModel * sender)
@@ -775,9 +780,18 @@ void GameView::NotifyInfoTipChanged(GameModel * sender)
 	infoTipPresence = 120;
 }
 
+void GameView::ResetVoteButtons()
+{
+	upVoteButton->SetToolTip("Like this save");
+	downVoteButton->SetToolTip("Dislike this save");
+	upVoteButton->Appearance.BackgroundPulse = false;
+	downVoteButton->Appearance.BackgroundPulse = false;
+}
+
 void GameView::NotifySaveChanged(GameModel * sender)
 {
 	saveReuploadAllowed = true;
+	ResetVoteButtons();
 	if (sender->GetSave())
 	{
 		if (introText > 50)
@@ -790,32 +804,41 @@ void GameView::NotifySaveChanged(GameModel * sender)
 			saveSimulationButton->SetShowSplit(false);
 		reloadButton->Enabled = true;
 		upVoteButton->Enabled = sender->GetSave()->GetID() && sender->GetUser().UserID && sender->GetUser().Username != sender->GetSave()->GetUserName();
-		if(sender->GetSave()->GetID() && sender->GetUser().UserID && sender->GetSave()->GetVote()==1)
-		{
-			upVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 128, 30, 255));
-			upVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 108, 10, 255));
-			upVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 108, 10, 255));
-		}
-		else
-		{
-			upVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 20, 20));
-			upVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 0, 0));
-			upVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 0, 0));
-		}
+
+		auto upVoteButtonColor = [this](bool active) {
+			if(active)
+			{
+				upVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 128, 30, 255));
+				upVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 108, 10, 255));
+				upVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 108, 10, 255));
+			}
+			else
+			{
+				upVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 20, 20));
+				upVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 0, 0));
+				upVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 0, 0));
+			}
+		};
+		auto upvoted = sender->GetSave()->GetID() && sender->GetUser().UserID && sender->GetSave()->GetVote() == 1;
+		upVoteButtonColor(upvoted);
 
 		downVoteButton->Enabled = upVoteButton->Enabled;
-		if (sender->GetSave()->GetID() && sender->GetUser().UserID && sender->GetSave()->GetVote()==-1)
-		{
-			downVoteButton->Appearance.BackgroundHover = (ui::Colour(128, 20, 30, 255));
-			downVoteButton->Appearance.BackgroundInactive = (ui::Colour(108, 0, 10, 255));
-			downVoteButton->Appearance.BackgroundDisabled = (ui::Colour(108, 0, 10, 255));
-		}
-		else
-		{
-			downVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 20, 20));
-			downVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 0, 0));
-			downVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 0, 0));
-		}
+		auto downVoteButtonColor = [this](bool active) {
+			if (active)
+			{
+				downVoteButton->Appearance.BackgroundHover = (ui::Colour(128, 20, 30, 255));
+				downVoteButton->Appearance.BackgroundInactive = (ui::Colour(108, 0, 10, 255));
+				downVoteButton->Appearance.BackgroundDisabled = (ui::Colour(108, 0, 10, 255));
+			}
+			else
+			{
+				downVoteButton->Appearance.BackgroundHover = (ui::Colour(20, 20, 20));
+				downVoteButton->Appearance.BackgroundInactive = (ui::Colour(0, 0, 0));
+				downVoteButton->Appearance.BackgroundDisabled = (ui::Colour(0, 0, 0));
+			}
+		};
+		auto downvoted = sender->GetSave()->GetID() && sender->GetUser().UserID && sender->GetSave()->GetVote() == -1;
+		downVoteButtonColor(downvoted);
 
 		if (sender->GetUser().UserID)
 		{
@@ -828,15 +851,18 @@ void GameView::NotifySaveChanged(GameModel * sender)
 			downVoteButton->Appearance.BorderDisabled = ui::Colour(100, 100, 100);
 		}
 
-		if (sender->GetSave()->GetVote() == 1)
-			upVoteButton->SetActionCallback({ [this] { c->Vote(0); } });
-		else
-			upVoteButton->SetActionCallback({ [this] { c->Vote(1); } });
-
-		if (sender->GetSave()->GetVote() == -1)
-			downVoteButton->SetActionCallback({ [this] { c->Vote(0) ;} });
-		else
-			downVoteButton->SetActionCallback({ [this] { c->Vote(-1) ;} });
+		upVoteButton->SetActionCallback({ [this, upVoteButtonColor, upvoted] {
+			upVoteButtonColor(true);
+			upVoteButton->SetToolTip("Saving vote...");
+			upVoteButton->Appearance.BackgroundPulse = true;
+			c->Vote(upvoted ? 0 : 1);
+		} });
+		downVoteButton->SetActionCallback({ [this, downVoteButtonColor, downvoted] {
+			downVoteButtonColor(true);
+			downVoteButton->SetToolTip("Saving vote...");
+			downVoteButton->Appearance.BackgroundPulse = true;
+			c->Vote(downvoted ? 0 : -1);
+		} });
 
 		tagSimulationButton->Enabled = sender->GetSave()->GetID();
 		if (sender->GetSave()->GetID())
@@ -914,7 +940,7 @@ ByteString GameView::TakeScreenshot(int captureUI, int fileType)
 	std::unique_ptr<VideoBuffer> screenshot;
 	if (captureUI)
 	{
-		screenshot = std::make_unique<VideoBuffer>(ren->DumpFrame());
+		screenshot = std::make_unique<VideoBuffer>(*rendererFrame);
 	}
 	else
 	{
@@ -988,7 +1014,7 @@ int GameView::Record(bool record)
 	}
 	else if (!recording)
 	{
-		time_t startTime = time(NULL);
+		time_t startTime = time(nullptr);
 		recordingFolder = startTime;
 		Platform::MakeDirectory("recordings");
 		Platform::MakeDirectory(ByteString::Build("recordings", PATH_SEP_CHAR, recordingFolder));
@@ -1149,7 +1175,6 @@ void GameView::OnMouseDown(int x, int y, unsigned button)
 				return;
 			Tool *lastTool = c->GetActiveTool(toolIndex);
 			c->SetLastTool(lastTool);
-			windTool = lastTool->Identifier == "DEFAULT_UI_WIND";
 			decoBrush = lastTool->Identifier.BeginsWith("DEFAULT_DECOR_");
 
 			UpdateDrawMode();
@@ -1442,13 +1467,13 @@ void GameView::OnKeyPress(int key, int scan, bool repeat, bool shift, bool ctrl,
 		if (ctrl)
 		{
 			auto findingElementCandidate = FindingElementCandidate();
-			if (ren->findingElement == findingElementCandidate)
+			if (rendererSettings->findingElement == findingElementCandidate)
 			{
-				ren->findingElement = std::nullopt;
+				rendererSettings->findingElement = std::nullopt;
 			}
 			else
 			{
-				ren->findingElement = findingElementCandidate;
+				rendererSettings->findingElement = findingElementCandidate;
 			}
 		}
 		else
@@ -1699,7 +1724,7 @@ void GameView::SkipIntroText()
 	introText = 0;
 }
 
-void GameView::OnTick(float dt)
+void GameView::OnTick()
 {
 	if (selectMode == PlaceSave && !placeSaveThumb)
 		selectMode = SelectNone;
@@ -1721,12 +1746,12 @@ void GameView::OnTick(float dt)
 		{
 			c->DrawFill(toolIndex, c->PointTranslate(currentMouse));
 		}
-		else if (windTool && drawMode == DrawLine)
+		else if (drawMode == DrawLine)
 		{
 			ui::Point drawPoint2 = currentMouse;
 			if (altBehaviour)
 				drawPoint2 = lineSnapCoords(c->PointTranslate(drawPoint1), currentMouse);
-			c->DrawLine(toolIndex, c->PointTranslate(drawPoint1), c->PointTranslateNoClamp(drawPoint2));
+			c->ToolDrag(toolIndex, c->PointTranslate(drawPoint1), c->PointTranslate(drawPoint2));
 		}
 	}
 
@@ -1757,53 +1782,31 @@ void GameView::OnTick(float dt)
 		}
 	}
 
-	if(introText)
-	{
-		introText -= int(dt)>0?(int(dt) < 5? int(dt):5):1;
-		if(introText < 0)
-			introText  = 0;
-	}
-	if(infoTipPresence>0)
-	{
-		infoTipPresence -= int(dt)>0?int(dt):1;
-		if(infoTipPresence<0)
-			infoTipPresence = 0;
-	}
 	if (isButtonTipFadingIn || (selectMode != PlaceSave && selectMode != SelectNone))
 	{
 		isButtonTipFadingIn = false;
-		if(buttonTipShow < 120)
-		{
-			buttonTipShow += int(dt*2)>0?int(dt*2):1;
-			if(buttonTipShow>120)
-				buttonTipShow = 120;
-		}
+		buttonTipShow.SetTarget(120);
 	}
-	else if(buttonTipShow>0)
+	else
 	{
-		buttonTipShow -= int(dt)>0?int(dt):1;
-		if(buttonTipShow<0)
-			buttonTipShow = 0;
+		buttonTipShow.SetTarget(0);
 	}
 	if (isToolTipFadingIn)
 	{
 		isToolTipFadingIn = false;
-		if(toolTipPresence < 120)
-		{
-			toolTipPresence += int(dt*2)>0?int(dt*2):1;
-			if(toolTipPresence>120)
-				toolTipPresence = 120;
-		}
+		toolTipPresence.SetTarget(120);
 	}
-	else if(toolTipPresence>0)
+	else
 	{
-		toolTipPresence -= int(dt)>0?int(dt):1;
-		if(toolTipPresence<0)
-			toolTipPresence = 0;
+		toolTipPresence.SetTarget(0);
 	}
-	c->Update();
 }
 
+void GameView::OnSimTick()
+{
+	c->Update();
+	wantFrame = true;
+}
 
 void GameView::DoMouseMove(int x, int y, int dx, int dy)
 {
@@ -1981,7 +1984,7 @@ void GameView::NotifyTransformedPlaceSaveChanged(GameModel *sender)
 {
 	if (sender->GetTransformedPlaceSave())
 	{
-		placeSaveThumb = SaveRenderer::Ref().Render(sender->GetTransformedPlaceSave(), true, true, sender->GetRenderer());
+		placeSaveThumb = SaveRenderer::Ref().Render(sender->GetTransformedPlaceSave(), true, sender->GetRendererSettings());
 		selectMode = PlaceSave;
 		selectPoint2 = mousePosition;
 	}
@@ -2125,161 +2128,200 @@ void GameView::SetSaveButtonTooltips()
 		saveSimulationButton->SetToolTips("Re-upload the current simulation", "Upload a new simulation. Hold Ctrl to save offline.");
 }
 
+void GameView::RenderSimulation(const RenderableSimulation &sim, bool handleEvents)
+{
+	ren->sim = &sim;
+	ren->Clear();
+	ren->RenderBackground();
+	if (handleEvents)
+	{
+		c->BeforeSimDraw();
+	}
+	{
+		// we may write graphicscache here
+		auto &sd = SimulationData::Ref();
+		std::unique_lock lk(sd.elementGraphicsMx);
+		ren->RenderSimulation();
+	}
+	ren->sim = nullptr;
+}
+
+void GameView::AfterSimDraw(const RenderableSimulation &sim)
+{
+	ren->sim = &sim;
+	c->AfterSimDraw();
+	ren->sim = nullptr;
+}
+
 void GameView::OnDraw()
 {
 	Graphics * g = GetGraphics();
-	if (ren)
+
+	auto threadedRenderingAllowed = c->ThreadedRenderingAllowed();
+	if (wantFrame)
 	{
-		// we're the main thread, we may write graphicscache
-		auto &sd = SimulationData::Ref();
-		std::unique_lock lk(sd.elementGraphicsMx);
-		ren->clearScreen();
-		ren->draw_air();
-		c->BeforeSimDraw();
-		ren->RenderBegin();
-		ren->SetSample(c->PointTranslate(currentMouse));
-		if (showBrush && selectMode == SelectNone && (!zoomEnabled || zoomCursorFixed) && activeBrush && (isMouseDown || (currentMouse.X >= 0 && currentMouse.X < XRES && currentMouse.Y >= 0 && currentMouse.Y < YRES)))
+		wantFrame = false;
+		if (threadedRenderingAllowed)
 		{
-			ui::Point finalCurrentMouse = windTool ? c->PointTranslateNoClamp(currentMouse) : c->PointTranslate(currentMouse);
-			ui::Point initialDrawPoint = drawPoint1;
+			StartRendererThread();
+			WaitForRendererThread();
+			AfterSimDraw(*sim);
+			foundParticles = ren->GetFoundParticles();
+			*rendererThreadResult = ren->GetVideo();
+			rendererFrame = rendererThreadResult.get();
+			DispatchRendererThread();
+		}
+		else
+		{
+			PauseRendererThread();
+			ren->ApplySettings(*rendererSettings);
+			RenderSimulation(*sim, true);
+			AfterSimDraw(*sim);
+			foundParticles = ren->GetFoundParticles();
+			rendererFrame = &ren->GetVideo();
+		}
+	}
 
-			if (wallBrush)
-			{
-				finalCurrentMouse = c->NormaliseBlockCoord(finalCurrentMouse);
-				initialDrawPoint = c->NormaliseBlockCoord(initialDrawPoint);
-			}
+	std::copy_n(rendererFrame->data(), rendererFrame->Size().X * rendererFrame->Size().Y, g->Data());
 
-			if (drawMode == DrawRect && isMouseDown)
-			{
-				if (drawSnap)
-				{
-					finalCurrentMouse = rectSnapCoords(c->PointTranslate(initialDrawPoint), finalCurrentMouse);
-				}
-				if (wallBrush)
-				{
-					if (finalCurrentMouse.X > initialDrawPoint.X)
-						finalCurrentMouse.X += CELL-1;
-					else
-						initialDrawPoint.X += CELL-1;
+	if (showBrush && selectMode == SelectNone && (!zoomEnabled || zoomCursorFixed) && activeBrush && (isMouseDown || (currentMouse.X >= 0 && currentMouse.X < XRES && currentMouse.Y >= 0 && currentMouse.Y < YRES)))
+	{
+		ui::Point finalCurrentMouse = c->PointTranslate(currentMouse);
+		ui::Point initialDrawPoint = drawPoint1;
 
-					if (finalCurrentMouse.Y > initialDrawPoint.Y)
-						finalCurrentMouse.Y += CELL-1;
-					else
-						initialDrawPoint.Y += CELL-1;
-				}
-				activeBrush->RenderRect(ren, c->PointTranslate(initialDrawPoint), finalCurrentMouse);
-			}
-			else if (drawMode == DrawLine && isMouseDown)
-			{
-				if (drawSnap)
-				{
-					finalCurrentMouse = lineSnapCoords(c->PointTranslate(initialDrawPoint), finalCurrentMouse);
-				}
-				activeBrush->RenderLine(ren, c->PointTranslate(initialDrawPoint), finalCurrentMouse);
-			}
-			else if (drawMode == DrawFill)// || altBehaviour)
-			{
-				if (!decoBrush)
-					activeBrush->RenderFill(ren, finalCurrentMouse);
-			}
-			if (drawMode == DrawPoints || drawMode==DrawLine || (drawMode == DrawRect && !isMouseDown))
-			{
-				if (wallBrush)
-				{
-					ui::Point finalBrushRadius = c->NormaliseBlockCoord(activeBrush->GetRadius());
-					auto topLeft     = finalCurrentMouse - finalBrushRadius;
-					auto bottomRight = finalCurrentMouse + finalBrushRadius + Vec2{ CELL - 1, CELL - 1 };
-					ren->XorLine({     topLeft.X,     topLeft.Y     }, { bottomRight.X,     topLeft.Y     });
-					ren->XorLine({     topLeft.X, bottomRight.Y     }, { bottomRight.X, bottomRight.Y     });
-					ren->XorLine({     topLeft.X,     topLeft.Y + 1 }, {     topLeft.X, bottomRight.Y - 1 }); // offset by 1 so the corners don't get xor'd twice
-					ren->XorLine({ bottomRight.X,     topLeft.Y + 1 }, { bottomRight.X, bottomRight.Y - 1 }); // offset by 1 so the corners don't get xor'd twice
-				}
-				else
-				{
-					activeBrush->RenderPoint(ren, finalCurrentMouse);
-				}
-			}
+		if (wallBrush)
+		{
+			finalCurrentMouse = c->NormaliseBlockCoord(finalCurrentMouse);
+			initialDrawPoint = c->NormaliseBlockCoord(initialDrawPoint);
 		}
 
-		if(selectMode!=SelectNone)
+		if (drawMode == DrawRect && isMouseDown)
 		{
-			if(selectMode==PlaceSave)
+			if (drawSnap)
 			{
-				if(placeSaveThumb && selectPoint2.X!=-1)
-				{
-					auto rect = RectSized(PlaceSavePos() * CELL, placeSaveThumb->Size());
-					ren->BlendImage(placeSaveThumb->Data(), 0x80, rect);
-					ren->XorDottedRect(rect);
-				}
+				finalCurrentMouse = rectSnapCoords(c->PointTranslate(initialDrawPoint), finalCurrentMouse);
+			}
+			if (wallBrush)
+			{
+				if (finalCurrentMouse.X > initialDrawPoint.X)
+					finalCurrentMouse.X += CELL-1;
+				else
+					initialDrawPoint.X += CELL-1;
+
+				if (finalCurrentMouse.Y > initialDrawPoint.Y)
+					finalCurrentMouse.Y += CELL-1;
+				else
+					initialDrawPoint.Y += CELL-1;
+			}
+			activeBrush->RenderRect(g, c->PointTranslate(initialDrawPoint), finalCurrentMouse);
+		}
+		else if (drawMode == DrawLine && isMouseDown)
+		{
+			if (drawSnap)
+			{
+				finalCurrentMouse = lineSnapCoords(c->PointTranslate(initialDrawPoint), finalCurrentMouse);
+			}
+			activeBrush->RenderLine(g, c->PointTranslate(initialDrawPoint), finalCurrentMouse);
+		}
+		else if (drawMode == DrawFill)// || altBehaviour)
+		{
+			if (!decoBrush)
+				activeBrush->RenderFill(g, finalCurrentMouse);
+		}
+		if (drawMode == DrawPoints || drawMode==DrawLine || (drawMode == DrawRect && !isMouseDown))
+		{
+			if (wallBrush)
+			{
+				ui::Point finalBrushRadius = c->NormaliseBlockCoord(activeBrush->GetRadius());
+				auto topLeft     = finalCurrentMouse - finalBrushRadius;
+				auto bottomRight = finalCurrentMouse + finalBrushRadius + Vec2{ CELL - 1, CELL - 1 };
+				g->XorLine({     topLeft.X,     topLeft.Y     }, { bottomRight.X,     topLeft.Y     });
+				g->XorLine({     topLeft.X, bottomRight.Y     }, { bottomRight.X, bottomRight.Y     });
+				g->XorLine({     topLeft.X,     topLeft.Y + 1 }, {     topLeft.X, bottomRight.Y - 1 }); // offset by 1 so the corners don't get xor'd twice
+				g->XorLine({ bottomRight.X,     topLeft.Y + 1 }, { bottomRight.X, bottomRight.Y - 1 }); // offset by 1 so the corners don't get xor'd twice
 			}
 			else
 			{
-				if(selectPoint1.X==-1)
-				{
-					ren->BlendFilledRect(RectSized(Vec2{ 0, 0 }, Vec2{ XRES, YRES }), 0x000000_rgb .WithAlpha(100));
-				}
-				else
-				{
-					int x2 = (selectPoint1.X>selectPoint2.X)?selectPoint1.X:selectPoint2.X;
-					int y2 = (selectPoint1.Y>selectPoint2.Y)?selectPoint1.Y:selectPoint2.Y;
-					int x1 = (selectPoint2.X<selectPoint1.X)?selectPoint2.X:selectPoint1.X;
-					int y1 = (selectPoint2.Y<selectPoint1.Y)?selectPoint2.Y:selectPoint1.Y;
-
-					if(x2>XRES-1)
-						x2 = XRES-1;
-					if(y2>YRES-1)
-						y2 = YRES-1;
-
-					ren->BlendFilledRect(RectSized(Vec2{ 0, 0 }, Vec2{ XRES, y1 }), 0x000000_rgb .WithAlpha(100));
-					ren->BlendFilledRect(RectSized(Vec2{ 0, y2+1 }, Vec2{ XRES, YRES-y2-1 }), 0x000000_rgb .WithAlpha(100));
-
-					ren->BlendFilledRect(RectSized(Vec2{ 0, y1 }, Vec2{ x1, (y2-y1)+1 }), 0x000000_rgb .WithAlpha(100));
-					ren->BlendFilledRect(RectSized(Vec2{ x2+1, y1 }, Vec2{ XRES-x2-1, (y2-y1)+1 }), 0x000000_rgb .WithAlpha(100));
-
-					ren->XorDottedRect(RectBetween(Vec2{ x1, y1 }, Vec2{ x2, y2 }));
-				}
+				activeBrush->RenderPoint(g, finalCurrentMouse);
 			}
 		}
+	}
 
-		c->AfterSimDraw();
-		ren->RenderEnd();
-
-		std::copy_n(ren->Data(), ren->Size().X * ren->Size().Y, g->Data());
-
-		if (doScreenshot)
+	if(selectMode!=SelectNone)
+	{
+		if(selectMode==PlaceSave)
 		{
-			doScreenshot = false;
-			TakeScreenshot(0, 0);
-		}
-
-		if(recording)
-		{
-			std::vector<char> data = ren->DumpFrame().ToPPM();
-
-			ByteString filename = ByteString::Build("recordings", PATH_SEP_CHAR, recordingFolder, PATH_SEP_CHAR, "frame_", Format::Width(recordingIndex++, 6), ".ppm");
-
-			Platform::WriteFile(data, filename);
-		}
-
-		if (logEntries.size())
-		{
-			int startX = 20;
-			int startY = YRES-20;
-			std::deque<std::pair<String, int> >::iterator iter;
-			for(iter = logEntries.begin(); iter != logEntries.end(); iter++)
+			if(placeSaveThumb && selectPoint2.X!=-1)
 			{
-				String message = (*iter).first;
-				int alpha = std::min((*iter).second, 255);
-				if (alpha <= 0) //erase this and everything older
-				{
-					logEntries.erase(iter, logEntries.end());
-					break;
-				}
-				startY -= 14;
-				g->BlendFilledRect(RectSized(Vec2{ startX-3, startY-3 }, Vec2{ Graphics::TextSize(message).X + 5, 14 }), 0x000000_rgb .WithAlpha(std::min(100, alpha)));
-				g->BlendText({ startX, startY }, message, 0xFFFFFF_rgb .WithAlpha(alpha));
-				(*iter).second -= 3;
+				auto rect = RectSized(PlaceSavePos() * CELL, placeSaveThumb->Size());
+				g->BlendImage(placeSaveThumb->Data(), 0x80, rect);
+				g->XorDottedRect(rect);
 			}
+		}
+		else
+		{
+			if(selectPoint1.X==-1)
+			{
+				g->BlendFilledRect(RectSized(Vec2{ 0, 0 }, Vec2{ XRES, YRES }), 0x000000_rgb .WithAlpha(100));
+			}
+			else
+			{
+				int x2 = (selectPoint1.X>selectPoint2.X)?selectPoint1.X:selectPoint2.X;
+				int y2 = (selectPoint1.Y>selectPoint2.Y)?selectPoint1.Y:selectPoint2.Y;
+				int x1 = (selectPoint2.X<selectPoint1.X)?selectPoint2.X:selectPoint1.X;
+				int y1 = (selectPoint2.Y<selectPoint1.Y)?selectPoint2.Y:selectPoint1.Y;
+
+				if(x2>XRES-1)
+					x2 = XRES-1;
+				if(y2>YRES-1)
+					y2 = YRES-1;
+
+				g->BlendFilledRect(RectSized(Vec2{ 0, 0 }, Vec2{ XRES, y1 }), 0x000000_rgb .WithAlpha(100));
+				g->BlendFilledRect(RectSized(Vec2{ 0, y2+1 }, Vec2{ XRES, YRES-y2-1 }), 0x000000_rgb .WithAlpha(100));
+
+				g->BlendFilledRect(RectSized(Vec2{ 0, y1 }, Vec2{ x1, (y2-y1)+1 }), 0x000000_rgb .WithAlpha(100));
+				g->BlendFilledRect(RectSized(Vec2{ x2+1, y1 }, Vec2{ XRES-x2-1, (y2-y1)+1 }), 0x000000_rgb .WithAlpha(100));
+
+				g->XorDottedRect(RectBetween(Vec2{ x1, y1 }, Vec2{ x2, y2 }));
+			}
+		}
+	}
+
+	g->RenderZoom();
+
+	if (doScreenshot)
+	{
+		doScreenshot = false;
+		TakeScreenshot(0, 0);
+	}
+
+	if(recording)
+	{
+		std::vector<char> data = VideoBuffer(*rendererFrame).ToPPM();
+
+		ByteString filename = ByteString::Build("recordings", PATH_SEP_CHAR, recordingFolder, PATH_SEP_CHAR, "frame_", Format::Width(recordingIndex++, 6), ".ppm");
+
+		Platform::WriteFile(data, filename);
+	}
+
+	if (logEntries.size())
+	{
+		int startX = 20;
+		int startY = YRES-20;
+		std::deque<std::pair<String, int> >::iterator iter;
+		for(iter = logEntries.begin(); iter != logEntries.end(); iter++)
+		{
+			String message = (*iter).first;
+			int alpha = std::min((*iter).second, 255);
+			if (alpha <= 0) //erase this and everything older
+			{
+				logEntries.erase(iter, logEntries.end());
+				break;
+			}
+			startY -= 14;
+			g->BlendFilledRect(RectSized(Vec2{ startX-3, startY-3 }, Vec2{ Graphics::TextSize(message).X + 5, 14 }), 0x000000_rgb .WithAlpha(std::min(100, alpha)));
+			g->BlendText({ startX, startY }, message, 0xFFFFFF_rgb .WithAlpha(alpha));
+			(*iter).second -= 3;
 		}
 	}
 
@@ -2442,7 +2484,7 @@ void GameView::OnDraw()
 					cg *= tmp;
 					cb *= tmp;
 					for (j=0; j<h; j++)
-						g->BlendPixel({ x+29-i, y+j }, RGBA<uint8_t>(cr>255?255:cr, cg>255?255:cg, cb>255?255:cb, alpha));
+						g->BlendPixel({ x+29-i, y+j }, RGBA(cr>255?255:cr, cg>255?255:cg, cb>255?255:cb, alpha));
 				}
 			}
 		}
@@ -2457,7 +2499,9 @@ void GameView::OnDraw()
 
 			sampleInfo << "X:" << sample.PositionX << " Y:" << sample.PositionY;
 
-			if (sample.Gravity)
+			auto gravtot = std::abs(sample.GravityVelocityX) +
+			               std::abs(sample.GravityVelocityY);
+			if (gravtot)
 				sampleInfo << ", GX: " << sample.GravityVelocityX << " GY: " << sample.GravityVelocityY;
 
 			if (c->GetAHeatEnable())
@@ -2480,8 +2524,8 @@ void GameView::OnDraw()
 
 		if (showDebug)
 		{
-			if (ren->findingElement)
-				fpsInfo << " Parts: " << ren->foundElements << "/" << sample.NumParts;
+			if (rendererSettings->findingElement)
+				fpsInfo << " Parts: " << foundParticles << "/" << sample.NumParts;
 			else
 				fpsInfo << " Parts: " << sample.NumParts;
 		}
@@ -2489,10 +2533,72 @@ void GameView::OnDraw()
 			fpsInfo << " [REPLACE MODE]";
 		if (c->GetReplaceModeFlags()&SPECIFIC_DELETE)
 			fpsInfo << " [SPECIFIC DELETE]";
-		if (ren && ren->GetGridSize())
-			fpsInfo << " [GRID: " << ren->GetGridSize() << "]";
-		if (ren && ren->findingElement)
+		if (rendererSettings->gridSize)
+			fpsInfo << " [GRID: " << rendererSettings->gridSize << "]";
+		if (rendererSettings->findingElement)
 			fpsInfo << " [FIND]";
+		if (c->GetDebugFlags() & DEBUG_SIMHUD)
+		{
+			fpsInfo << "\nSimulation";
+			fpsInfo << "\n  FPS cap: ";
+			if (std::holds_alternative<FpsLimitNone>(simFpsLimit))
+			{
+				fpsInfo << "none";
+			}
+			else
+			{
+				fpsInfo << std::get<FpsLimitExplicit>(simFpsLimit).value;
+			}
+		}
+		if (c->GetDebugFlags() & DEBUG_RENHUD)
+		{
+			fpsInfo << "\nRendering";
+			fpsInfo << "\n  Draw cap: ";
+			auto drawLimit = ui::Engine::Ref().GetDrawingFrequencyLimit();
+			if (std::holds_alternative<DrawLimitDisplay>(drawLimit))
+			{
+				fpsInfo << "display";
+			}
+			else if (std::holds_alternative<DrawLimitNone>(drawLimit))
+			{
+				fpsInfo << "none";
+			}
+			else
+			{
+				fpsInfo << std::get<DrawLimitExplicit>(drawLimit).value;
+			}
+			fpsInfo << ", effective: ";
+			if (auto drawCap = ui::Engine::Ref().GetEffectiveDrawCap())
+			{
+				fpsInfo << *drawCap;
+			}
+			else
+			{
+				fpsInfo << "none";
+			}
+			fpsInfo << "\n  SRT: ";
+			if (!c->GetThreadedRendering())
+			{
+				fpsInfo << "disabled";
+			}
+			else if (threadedRenderingAllowed)
+			{
+				fpsInfo << "enabled";
+			}
+			else
+			{
+				fpsInfo << "hindered";
+			}
+			fpsInfo << "\n  Refresh rate: ";
+			auto refreshRate = ui::Engine::Ref().GetRefreshRate();
+			fpsInfo << std::visit([](auto &refreshRate) {
+				return refreshRate.value;
+			}, refreshRate);
+			if (std::holds_alternative<RefreshRateDefault>(refreshRate))
+			{
+				fpsInfo << " (default)";
+			}
+		}
 
 		int textWidth = Graphics::TextSize(fpsInfo.Build()).X - 1;
 		int alpha = 255-introText*5;
@@ -2503,7 +2609,7 @@ void GameView::OnDraw()
 	//Tooltips
 	if(infoTipPresence)
 	{
-		int infoTipAlpha = (infoTipPresence>50?50:infoTipPresence)*5;
+		int infoTipAlpha = (infoTipPresence>50?50:int(infoTipPresence))*5;
 		g->BlendTextOutline({ (XRES - (Graphics::TextSize(infoTip).X - 1)) / 2, YRES / 2 - 2 }, infoTip, 0xFFFFFF_rgb .WithAlpha(infoTipAlpha));
 	}
 
@@ -2553,17 +2659,157 @@ ui::Point GameView::rectSnapCoords(ui::Point point1, ui::Point point2)
 std::optional<FindingElement> GameView::FindingElementCandidate() const
 {
 	Tool *active = c->GetActiveTool(0);
+	auto &properties = Particle::GetProperties();
 	if (active->Identifier.Contains("_PT_"))
 	{
-		return FindingElement{ Particle::GetProperties()[FIELD_TYPE], active->ToolID };
+		return FindingElement{ properties[FIELD_TYPE], active->ToolID };
 	}
 	else if (active->Identifier == "DEFAULT_UI_PROPERTY")
 	{
 		auto configuration = static_cast<PropertyTool *>(active)->GetConfiguration();
 		if (configuration)
 		{
-			return FindingElement{ configuration->prop, configuration->propValue };
+			return FindingElement{ properties[configuration->changeProperty.propertyIndex], configuration->changeProperty.propertyValue };
 		}
 	}
 	return std::nullopt;
+}
+
+pixel GameView::GetPixelUnderMouse() const
+{
+	auto point = c->PointTranslate(currentMouse);
+	if (!rendererFrame->Size().OriginRect().Contains(point))
+	{
+		return 0;
+	}
+	return (*rendererFrame)[point];
+}
+
+void GameView::RendererThread()
+{
+	while (true)
+	{
+		{
+			std::unique_lock lk(rendererThreadMx);
+			rendererThreadOwnsRenderer = false;
+			rendererThreadCv.notify_one();
+			rendererThreadCv.wait(lk, [this]() {
+				return rendererThreadState == rendererThreadStopping || rendererThreadOwnsRenderer;
+			});
+			if (rendererThreadState == rendererThreadStopping)
+			{
+				break;
+			}
+		}
+		RenderSimulation(*rendererThreadSim, false);
+	}
+}
+
+void GameView::StartRendererThread()
+{
+	bool start = false;
+	bool notify = false;
+	{
+		std::lock_guard lk(rendererThreadMx);
+		if (rendererThreadState == rendererThreadAbsent)
+		{
+			rendererThreadSim = std::make_unique<RenderableSimulation>();
+			rendererThreadResult = std::make_unique<RendererFrame>();
+			rendererThreadState = rendererThreadRunning;
+			start = true;
+		}
+		else if (rendererThreadState == rendererThreadPaused)
+		{
+			rendererThreadState = rendererThreadRunning;
+			notify = true;
+		}
+	}
+	if (start)
+	{
+		rendererThread = std::thread([this]() {
+			RendererThread();
+		});
+		notify = true;
+	}
+	if (notify)
+	{
+		DispatchRendererThread();
+	}
+}
+
+void GameView::StopRendererThread()
+{
+	bool join = false;
+	{
+		std::lock_guard lk(rendererThreadMx);
+		if (rendererThreadState != rendererThreadAbsent)
+		{
+			rendererThreadState = rendererThreadStopping;
+			join = true;
+		}
+	}
+	if (join)
+	{
+		rendererThreadCv.notify_one();
+		rendererThread.join();
+	}
+}
+
+void GameView::PauseRendererThread()
+{
+	std::unique_lock lk(rendererThreadMx);
+	if (rendererThreadState == rendererThreadRunning)
+	{
+		rendererThreadState = rendererThreadPaused;
+		rendererThreadCv.notify_one();
+		rendererThreadCv.wait(lk, [this]() {
+			return !rendererThreadOwnsRenderer;
+		});
+	}
+}
+
+void GameView::DispatchRendererThread()
+{
+	ren->ApplySettings(*rendererSettings);
+	*rendererThreadSim = *sim;
+	rendererThreadSim->useLuaCallbacks = false;
+	rendererThreadOwnsRenderer = true;
+	{
+		std::lock_guard lk(rendererThreadMx);
+		rendererThreadOwnsRenderer = true;
+	}
+	rendererThreadCv.notify_one();
+}
+
+void GameView::WaitForRendererThread()
+{
+	std::unique_lock lk(rendererThreadMx);
+	rendererThreadCv.wait(lk, [this]() {
+		return !rendererThreadOwnsRenderer;
+	});
+}
+
+void GameView::ApplySimFpsLimit()
+{
+	if (std::holds_alternative<FpsLimitNone>(simFpsLimit))
+	{
+		if (c->GetPaused())
+		{
+			SetFpsLimit(FpsLimitFollowDraw{});
+		}
+		else
+		{
+			SetFpsLimit(FpsLimitNone{});
+		}
+	}
+	else
+	{
+		SetFpsLimit(std::get<FpsLimitExplicit>(simFpsLimit));
+	}
+}
+
+void GameView::SetSimFpsLimit(SimFpsLimit newSimFpsLimit)
+{
+	simFpsLimit = newSimFpsLimit;
+	ApplySimFpsLimit();
 }
