@@ -21,6 +21,8 @@
 #include <memory>
 #include <optional>
 
+
+
 constexpr int CHANNELS = int(MAX_TEMP - 73) / 100 + 2;
 
 class Snapshot;

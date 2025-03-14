@@ -14,9 +14,12 @@
 #include "elements/STKM.h"
 #include "elements/PIPE.h"
 #include "elements/FILT.h"
+#include "osc/osc.h"
 #include "elements/PRTI.h"
 #include <iostream>
 #include <set>
+
+static TPTOscClient* oscClient;
 
 static float remainder_p(float x, float y)
 {
@@ -1725,7 +1728,7 @@ Simulation::GetNormalResult Simulation::get_normal_interp(Sim &sim, int pt, floa
 template
 Simulation::GetNormalResult Simulation::get_normal_interp<false, const Simulation>(const Simulation &sim, int pt, float x0, float y0, float dx, float dy);
 
-void Simulation::kill_part(int i)//kills particle number i
+void Simulation::kill_part(int i)//kills particle number i ASDFGHJ
 {
 	if (i < 0 || i >= NPART)
 		return;
@@ -1736,6 +1739,8 @@ void Simulation::kill_part(int i)//kills particle number i
 	auto &sd = SimulationData::CRef();
 	auto &elements = sd.elements;
 	int t = parts[i].type;
+	
+	
 	if (t && elements[t].ChangeType)
 	{
 		(*(elements[t].ChangeType))(this, i, x, y, t, PT_NONE);
@@ -1781,6 +1786,10 @@ bool Simulation::part_change_type(int i, int x, int y, int t)
 			return false;
 	}
 
+	if (parts[i].type == PT_VINE || parts[i].type == PT_PLNT){
+		oscClient->KillPlant(y);
+	}
+
 	if (elements[parts[i].type].ChangeType)
 		(*(elements[parts[i].type].ChangeType))(this, i, x, y, parts[i].type, t);
 	if (elements[t].ChangeType)
@@ -1808,7 +1817,7 @@ bool Simulation::part_change_type(int i, int x, int y, int t)
 
 //the function for creating a particle, use p=-1 for creating a new particle, -2 is from a brush, or a particle number to replace a particle.
 //tv = Type (PMAPBITS bits) + Var (32-PMAPBITS bits), var is usually 0
-int Simulation::create_part(int p, int x, int y, int t, int v)
+int Simulation::create_part(int p, int x, int y, int t, int v)  //ASDFGHJ
 {
 	int i, oldType = PT_NONE;
 
@@ -1939,6 +1948,10 @@ int Simulation::create_part(int p, int x, int y, int t, int v)
 		(*(elements[t].ChangeType))(this, i, x, y, oldType, t);
 
 	elementCount[t]++;
+	
+	if (t == PT_VINE || t == PT_PLNT){
+		oscClient->NewPlant(y);
+	}
 	return i;
 }
 
@@ -2212,6 +2225,9 @@ void Simulation::UpdateParticles(int start, int end)
 	{
 		if (parts[i].type)
 		{
+			
+
+
 			debug_mostRecentlyUpdated = i;
 			auto t = parts[i].type;
 
@@ -2742,6 +2758,8 @@ void Simulation::UpdateParticles(int start, int end)
 				x = (int)(parts[i].x+0.5f);
 				y = (int)(parts[i].y+0.5f);
 			}
+			
+			
 
 			if(legacy_enable)//if heat sim is off
 				Element::legacyUpdate(this, i,x,y,surround_space,nt, parts, pmap);
@@ -3220,9 +3238,30 @@ killed:
 						}
 					}
 				}
+				
 			}
 movedone:
 			continue;
+		}
+		
+	}
+
+	
+
+	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+		if (parts[i].type) {
+			if (parts[i].vx != 0 && parts[i].vy != 0){
+				oscClient->CountParticle(&(parts[i]));
+			}
+		}
+	}
+	oscClient->SortParticles();
+
+	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+		if (parts[i].type) {
+			if (parts[i].vx != 0 && parts[i].vy != 0){
+				oscClient->ProcessParticle(&(parts[i]));
+			}
 		}
 	}
 
@@ -3231,6 +3270,7 @@ movedone:
 	{
 		framerender--;
 	}
+	oscClient->AnalyzeAndSend();
 }
 
 void Simulation::RecalcFreeParticles(bool do_life_dec)
@@ -3813,10 +3853,16 @@ void Simulation::AfterSim()
 	frameCount += 1;
 }
 
-Simulation::~Simulation() = default;
+Simulation::~Simulation() {
+	delete oscClient;
+}
 
 Simulation::Simulation()
 {
+	if (oscClient == NULL)
+		oscClient = new TPTOscClient();
+
+	currentTick = 0;
 	std::fill(elementCount, elementCount+PT_NUM, 0);
 	elementRecount = true;
 
