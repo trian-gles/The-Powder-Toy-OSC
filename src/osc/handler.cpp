@@ -63,11 +63,11 @@ std::tuple<std::vector<int>, std::vector<int>> PlantHandler::get() {
 
 
 
-DistributionHandler::DistributionHandler() : min(MIN), max(MAX) {}
+DistributionHandler::DistributionHandler() : min(MAX), max(MIN) {}
 
 void DistributionHandler::reset() {
-    min = MIN;
-    max = MAX;
+    min = MAX;
+    max = MIN;
 }
 
 void DistributionHandler::update(int v) {
