@@ -1786,7 +1786,7 @@ bool Simulation::part_change_type(int i, int x, int y, int t)
 			return false;
 	}
 
-	if (parts[i].type == PT_VINE || parts[i].type == PT_PLNT){
+	if (parts[i].type == PT_PLNT){
 		oscClient->KillPlant(y);
 	}
 
@@ -3256,7 +3256,7 @@ movedone:
 
 	
 
-	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+	for (auto i = start; i < end && i <= parts.lastActiveIndex; i++){
 		if (parts[i].type) {
 			if (parts[i].vx != 0 && parts[i].vy != 0){
 				oscClient->CountParticle(&(parts[i]));
@@ -3265,7 +3265,7 @@ movedone:
 	}
 	oscClient->SortParticles();
 
-	for (auto i = start; i < end && i <= parts_lastActiveIndex; i++){
+	for (auto i = start; i < end && i <= parts.lastActiveIndex; i++){
 		if (parts[i].type) {
 			if (parts[i].vx != 0 && parts[i].vy != 0){
 				oscClient->ProcessParticle(&(parts[i]));
