@@ -2509,6 +2509,19 @@ void Simulation::UpdateParticles(int start, int end)
 							else
 								t = PT_LAVA;
 						}
+						else if (t == PT_RIME)
+						{
+							if (parts[i].tmp > 5)
+							{
+								t = PT_ACID;
+								parts[i].life = 25 + 5 * parts[i].tmp;
+								parts[i].tmp = 0;
+							}
+							else
+							{
+								t = PT_WATR;
+							}
+						}
 						else
 							s = 0;
 					}
@@ -2582,7 +2595,7 @@ void Simulation::UpdateParticles(int start, int end)
 					{
 						if (t==PT_ICEI || t==PT_LAVA || t==PT_SNOW)
 							parts[i].ctype = parts[i].type;
-						if (!(t==PT_ICEI && parts[i].ctype==PT_FRZW))
+						if (!(t==PT_ICEI && parts[i].ctype==PT_FRZW) && t!=PT_ACID)
 							parts[i].life = 0;
 						if (t == PT_FIRE)
 						{
@@ -2937,12 +2950,7 @@ killed:
 
 					if ((TYP(r)==PT_PIPE || TYP(r) == PT_PPIP) && !TYP(parts[ID(r)].ctype))
 					{
-						parts[ID(r)].ctype =  parts[i].type;
-						parts[ID(r)].temp = parts[i].temp;
-						parts[ID(r)].tmp2 = parts[i].life;
-						parts[ID(r)].tmp3 = parts[i].tmp;
-						parts[ID(r)].tmp4 = parts[i].ctype;
-						kill_part(i);
+						Element_PIPE_transfer_part_to_pipe(parts+i, parts+(ID(r)));
 						continue;
 					}
 
